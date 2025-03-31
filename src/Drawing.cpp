@@ -6,6 +6,19 @@
 #include "alarm.h"
 #include <map>
 
+int remapAxis(int axis) {
+    switch (axis) {
+        case 0:
+            return 0;  // X remains as X.
+        case 1:
+            return 2;  // New Z uses the original Z (which was at index 2).
+        case 2:
+            return 1;  // New C uses the original Y (which was at index 1).
+        default:
+            return axis;
+    }
+}
+
 void drawBackground(int color) {
     canvas.fillSprite(color);
 }
@@ -242,20 +255,26 @@ void fancyNumber(pos_t n, int n_decimals, int hl_digit, int x, int y, int text_c
 }
 
 void DRO::drawHoming(int axis, bool highlight, bool homed) {
-    text(axisNumToCStr(axis), text_left_x(), text_middle_y(), myLimitSwitches[axis] ? GREEN : YELLOW, MEDIUM, middle_left);
-    fancyNumber(myAxes[axis], num_digits(), -1, text_right_x(), text_middle_y(), highlight ? (homed ? GREEN : RED) : DARKGREY, RED);
+    text(axisNumToCStr(axis), text_left_x(), text_middle_y(), myLimitSwitches[remapAxis(axis)] ? GREEN : YELLOW, MEDIUM, middle_left);
+    fancyNumber(myAxes[remapAxis(axis)], num_digits(), -1, text_right_x(), text_middle_y(), highlight ? (homed ? GREEN : RED) : DARKGREY, RED);
     advance();
 }
 
 void DRO::draw(int axis, int hl_digit, bool highlight) {
     text(axisNumToCStr(axis), text_left_x(), text_middle_y(), highlight ? GREEN : DARKGREY, MEDIUM, middle_left);
-    fancyNumber(
-        myAxes[axis], num_digits(), hl_digit, text_right_x(), text_middle_y(), highlight ? WHITE : DARKGREY, highlight ? RED : DARKGREY);
+    fancyNumber(myAxes[remapAxis(axis)],
+                num_digits(),
+                hl_digit,
+                text_right_x(),
+                text_middle_y(),
+                highlight ? WHITE : DARKGREY,
+                highlight ? RED : DARKGREY);
     advance();
 }
 
 void DRO::draw(int axis, bool highlight) {
-    Stripe::draw(axisNumToChar(axis), pos_to_cstr(myAxes[axis], num_digits()), highlight, myLimitSwitches[axis] ? GREEN : WHITE);
+    Stripe::draw(
+        axisNumToChar(axis), pos_to_cstr(myAxes[remapAxis(axis)], num_digits()), highlight, myLimitSwitches[remapAxis(axis)] ? GREEN : WHITE);
 }
 
 void LED::draw(bool highlighted) {

@@ -39,6 +39,19 @@ int num_digits() {
     return inInches ? 3 : 2;
 }
 
+int _remapAxis(int axis) {
+    switch (axis) {
+        case 0:
+            return 0;  // X remains as X.
+        case 1:
+            return 2;  // New Z uses the original Z (which was at index 2).
+        case 2:
+            return 1;  // New C uses the original Y (which was at index 1).
+        default:
+            return axis;
+    }
+}
+
 // clang-format off
 // Maps the state strings in status reports to internal state enum values
 struct cmp_str {
@@ -181,7 +194,7 @@ void send_linef(const char* fmt, ...) {
 }
 
 char axisNumToChar(int axis) {
-    return "XYZABC"[axis];
+    return "XZCABY"[axis];
 }
 
 const char* axisNumToCStr(int axis) {

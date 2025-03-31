@@ -10,13 +10,13 @@ extern Scene statusScene;
 
 IntConfigItem homing_cycles[HOMING_N_AXIS] = {
     { "$/axes/x/homing/cycle" },
-    { "$/axes/y/homing/cycle" },
     { "$/axes/z/homing/cycle" },
+    { "$/axes/c/homing/cycle" },
 };
 BoolConfigItem homing_allows[HOMING_N_AXIS] = {
     { "$/axes/x/homing/allow_single_axis" },
-    { "$/axes/y/homing/allow_single_axis" },
     { "$/axes/z/homing/allow_single_axis" },
+    { "$/axes/c/homing/allow_single_axis" },
 };
 
 int  homed_axes = 0;

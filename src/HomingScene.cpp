@@ -1,6 +1,6 @@
-// Copyright (c) 2023 - Barton Dring
+// Copyright (c) 2023 Mitch Bradley
 // Use of this source code is governed by a GPLv3 license that can be found in the LICENSE file.
-
+// changed for lathe XZC control by Matthew Metzger . github @633k4hire 
 #include "Scene.h"
 #include "ConfigItem.h"
 
@@ -8,6 +8,7 @@ extern Scene statusScene;
 
 #define HOMING_N_AXIS 3
 
+// These configuration items now refer only to the X, Z, and C axes.
 IntConfigItem homing_cycles[HOMING_N_AXIS] = {
     { "$/axes/x/homing/cycle" },
     { "$/axes/z/homing/cycle" },
@@ -19,7 +20,7 @@ BoolConfigItem homing_allows[HOMING_N_AXIS] = {
     { "$/axes/c/homing/allow_single_axis" },
 };
 
-int  homed_axes = 0;
+int homed_axes = 0;
 bool is_homed(int axis) {
     return homed_axes & (1 << axis);
 }
@@ -36,7 +37,7 @@ void detect_homing_info() {
     homed_axes = 0;
 }
 bool can_home(int i) {
-    // Cannot home if cycle == 0 and !allow_single_axis
+    // Cannot home if cycle == 0 and single axis homing is not allowed.
     return homing_cycles[i].get() != 0 || homing_allows[i].get();
 }
 
@@ -46,6 +47,7 @@ bool have_homing_info() {
 
 class HomingScene : public Scene {
 private:
+    // _axis_to_home holds the selected axis: 0 for X, 1 for Z, 2 for C, or -1 for "all axes".
     int _axis_to_home = -1;
     int _auto         = false;
 
@@ -54,13 +56,16 @@ private:
 public:
     HomingScene() : Scene("Home", 4) {}
 
-    bool is_homing(int axis) { return can_home(axis) && (_axis_to_home == -1 || _axis_to_home == axis); }
+    // Check if the given axis is eligible for homing.
+    bool is_homing(int axis) {
+        return can_home(axis) && (_axis_to_home == -1 || _axis_to_home == axis);
+    }
     void onEntry(void* arg) override {
         if (state == Idle && _auto) {
             pop_scene();
         }
         const char* s = static_cast<const char*>(arg);
-        _auto         = s && strcmp(s, "auto") == 0;
+        _auto = s && strcmp(s, "auto") == 0;
     }
 
     void onStateChange(state_t old_state) override {
@@ -70,10 +75,13 @@ public:
         }
 #endif
     }
-    void onDialButtonPress() override { pop_scene(); }
+    void onDialButtonPress() override {
+        pop_scene();
+    }
     void onGreenButtonPress() override {
         if (state == Idle || state == Alarm) {
             if (_axis_to_home != -1) {
+                // Send the homing command for the specific axis using the updated mapping.
                 send_linef("$H%c", axisNumToChar(_axis_to_home));
             } else {
                 send_line("$H");
@@ -90,10 +98,11 @@ public:
         }
     }
 
+    // Cycle through the available axes. If we exceed the number of axes, reset to -1 (meaning "home all").
     void increment_axis_to_home() {
         do {
-            ++_axis_to_home;
-            if (_axis_to_home > HOMING_N_AXIS) {
+            _axis_to_home++;
+            if (_axis_to_home >= HOMING_N_AXIS) {
                 _axis_to_home = -1;
                 return;
             }
@@ -118,54 +127,30 @@ public:
         drawMenuTitle(current_scene->name());
         drawStatus();
 
-        const char* redLabel    = "";
-        std::string grnLabel    = "";
-        const char* orangeLabel = "";
-        std::string green       = "Home ";
-
-        if (false && state == Homing) {
+        const char* redLabel = "";
+        std::string grnLabel = "";
+        // We don’t need an orange label change for this scene.
+        if (state == Idle || state == Homing || state == Alarm) {
             DRO dro(16, 68, 210, 32);
-            for (size_t axis = 0; axis < HOMING_N_AXIS; axis++) {
-                dro.draw(axis, -1, true);
-            }
-
-        } else if (state == Idle || state == Homing || state == Alarm) {
-            DRO dro(16, 68, 210, 32);
+            // Display the homing DRO for axes 0 (X), 1 (Z), and 2 (C)
             for (int axis = 0; axis < HOMING_N_AXIS; ++axis) {
                 dro.drawHoming(axis, is_homing(axis), is_homed(axis));
             }
 
-#if 0
-            int x      = 50;
-            int y      = 65;
-            int width  = display.width() - (x * 2);
-            int height = 32;
-
-            Stripe button(x, y, width, height, SMALL);
-            button.draw("Home All", _axis_to_home == -1);
-            y = button.y();  // LEDs start with the Home X button
-            button.draw("Home X", _axis_to_home == 0);
-            button.draw("Home Y", _axis_to_home == 1);
-            button.draw("Home Z", _axis_to_home == 2);
-            LED led(x - 16, y + height / 2, 10, button.gap());
-            led.draw(myLimitSwitches[0]);
-            led.draw(myLimitSwitches[1]);
-            led.draw(myLimitSwitches[2]);
-#endif
-
             if (state == Homing) {
                 redLabel = "E-Stop";
             } else {
-                if (state == Alarm && (strchr(myCtrlPins, 'D') == NULL)) {  // You can reset alarms if door is not active
+                if (state == Alarm && (strchr(myCtrlPins, 'D') == NULL)) {  
+                    // Allow alarm reset only if door is inactive.
                     redLabel = "Reset";
                 }
                 if (_axis_to_home == -1) {
+                    // If no specific axis is selected, show the command for all homable axes.
                     for (int axis = 0; axis < HOMING_N_AXIS; ++axis) {
                         if (can_home(axis)) {
                             if (!grnLabel.length()) {
                                 grnLabel = "Home";
                             }
-
                             grnLabel += axisNumToChar(axis);
                         }
                     }
@@ -189,4 +174,5 @@ public:
         refreshDisplay();
     }
 };
+
 HomingScene homingScene;

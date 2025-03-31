@@ -6,14 +6,23 @@
 #include "alarm.h"
 #include <map>
 
+/// @brief remap for XZCABY axes for LATHE XZC control
+/// @param axis
+/// @return
 int remapAxis(int axis) {
     switch (axis) {
         case 0:
             return 0;  // X remains as X.
         case 1:
-            return 2;  // New Z uses the original Z (which was at index 2).
+            return 2;  // Z replaces Y (which was at index 1).
         case 2:
-            return 1;  // New C uses the original Y (which was at index 1).
+            return 5;  // C replaces Z (which was at index 2).
+        case 3:
+            return 3;  // A replaces A (which was at index 3).
+        case 4:
+            return 4; // B replaces B (which was at index 4).
+        case 5:
+            return 1; // Y replaces C (which was at index 5).
         default:
             return axis;
     }

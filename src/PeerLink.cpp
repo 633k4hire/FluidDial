@@ -191,6 +191,14 @@ enum class LinkState : uint8_t {
     Reconnecting,
 };
 
+enum class KeepaliveResult : uint8_t {
+    Rejected,
+    NewPlainSession,
+    Authenticated,
+    AuthenticatedConfirmed,
+    DuplicatePlain,
+};
+
 static LinkState        _link_state       = LinkState::Unpaired;
 static uint32_t         _link_state_since_ms = 0;
 static bool             _pairing_complete = false;
@@ -573,6 +581,7 @@ static void begin_reconnecting() {
         return;
     }
 
+    _tx_len = 0;
     reset_link_session();
     _last_rx_ms = 0;
     _reconnect_probe_idx = 0;
@@ -596,22 +605,28 @@ static void begin_synchronizing(uint8_t channel) {
     _synchronize_authenticated_tx = send_keepalive(_peer_mac);
 }
 
-static int accept_keepalive(const uint8_t* data, int len) {
+static KeepaliveResult accept_keepalive(const uint8_t* data, int len) {
     if (len == AUTH_KEEPALIVE_SIZE) {
         uint32_t advertised, nonce, counter;
         memcpy(&advertised, data + 1, 4);
         memcpy(&nonce,      data + 5, 4);
         memcpy(&counter,    data + 9, 4);
-        if (!ESPNowCrypto::acceptReplay(_rx_nonce, _rx_replay, nonce, counter, millis()) || advertised == 0) return 0;
+        if (!ESPNowCrypto::acceptReplay(
+                _rx_nonce, _rx_replay, nonce, counter, millis()) ||
+            advertised == 0) {
+            return KeepaliveResult::Rejected;
+        }
         _tx_peer_nonce.store(advertised, std::memory_order_release);
         _tx_peer_known.store(true, std::memory_order_release);
-        return (data[1 + 4 + ART_TAG_SIZE] & KEEPALIVE_SESSION_CONFIRMED) ? 3 : 2;
+        return (data[1 + 4 + ART_TAG_SIZE] & KEEPALIVE_SESSION_CONFIRMED)
+                   ? KeepaliveResult::AuthenticatedConfirmed
+                   : KeepaliveResult::Authenticated;
     }
 
     if (len == 5) {
         uint32_t advertised;
         memcpy(&advertised, data + 1, 4);
-        if (advertised == 0) return 0;
+        if (advertised == 0) return KeepaliveResult::Rejected;
 
         bool new_session =
             !_tx_peer_known.load(std::memory_order_acquire) ||
@@ -623,10 +638,11 @@ static int accept_keepalive(const uint8_t* data, int len) {
             ESPNowCrypto::issueRxChallenge(_rx_nonce);
             _rx_replay = {};
         }
-        return 1;
+        return new_session ? KeepaliveResult::NewPlainSession
+                           : KeepaliveResult::DuplicatePlain;
     }
 
-    return 0;
+    return KeepaliveResult::Rejected;
 }
 
 static void new_pairing_session_id() {
@@ -940,13 +956,15 @@ static void process_rx_packet(const RxPacket& packet) {
     }
 
     if (pkt_type == PKT_KEEPALIVE) {
-        int keepalive_state = accept_keepalive(data, len);
-        if (keepalive_state == 2 || keepalive_state == 3) {
+        KeepaliveResult keepalive = accept_keepalive(data, len);
+        if (keepalive == KeepaliveResult::Authenticated ||
+            keepalive == KeepaliveResult::AuthenticatedConfirmed) {
             note_rx_channel(packet.channel);
             if (_link_state == LinkState::Reconnecting) {
                 begin_synchronizing(packet.channel);
             } else if (_link_state == LinkState::Synchronizing) {
-                if (keepalive_state == 3 && _synchronize_authenticated_tx) {
+                if (keepalive == KeepaliveResult::AuthenticatedConfirmed &&
+                    _synchronize_authenticated_tx) {
                     set_connected_now();
                     update_rx_time();
                 } else {
@@ -957,9 +975,21 @@ static void process_rx_packet(const RxPacket& packet) {
                 set_connected_now();
                 update_rx_time();
             }
-        } else if (keepalive_state == 1) {
+        } else if (keepalive == KeepaliveResult::NewPlainSession) {
             note_rx_channel(packet.channel);
             begin_synchronizing(packet.channel);
+        } else if (keepalive == KeepaliveResult::DuplicatePlain) {
+            note_rx_channel(packet.channel);
+            if (_link_state == LinkState::Synchronizing ||
+                _link_state == LinkState::Connected) {
+                // A valid (replay-checked) duplicate keepalive is still proof the
+                // peer is alive. Feed the RX watchdog (_last_rx_ms) so a steady
+                // stream of these isn't mistaken for silence and doesn't trigger a
+                // needless reconnect; also refresh the model-level link timer.
+                _last_rx_ms = millis();
+                update_rx_time();
+                send_keepalive(_peer_mac);
+            }
         }
         return;
     }

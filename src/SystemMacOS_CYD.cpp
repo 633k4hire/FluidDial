@@ -370,6 +370,7 @@ WiFiConfig  wifi_active_config()                         { return _preview_cfg; 
 void        ws_putchar(uint8_t)                          {}
 int         ws_getchar()                                 { return -1; }
 bool          wifi_use_uart_mode()                           { return false; }
+void          wifi_discard_pending_text()                    {}
 void          wifi_set_uart_mode(bool)                       {}
 bool          wifi_is_first_boot()                           { return false; }
 TransportMode wifi_get_transport()                           { return TransportMode::ESPNOW; }

@@ -82,6 +82,7 @@ bool decode_state_string(const char* state_string, state_t& state) {
 void set_disconnected_state() {
     state           = Disconnected;
     my_state_string = "N/C";
+    jog_window_reset();
 }
 
 // clang-format off
@@ -174,7 +175,12 @@ void send_line(const char* s, int timeout) {
     dbg_println(s);
 }
 
-// Send a jog command over a networked transport without the per-line "ok" handshake.
+// Count of jog lines streamed over Telnet but not yet acked by "ok""" to prevent outrunning FluidNC planner.
+static int s_jog_window = 0;
+int        jog_window_outstanding() { return s_jog_window; }
+void       jog_window_reset() { s_jog_window = 0; }
+
+// Stream network jogs without blocking
 void send_jog_line(const char* s) {
 #ifdef USE_WIFI
     if (!wifi_use_uart_mode()) {  // WiFi / Telnet / ESP-NOW: stream, no ack-gate
@@ -183,29 +189,40 @@ void send_jog_line(const char* s) {
         }
         fnc_putchar('\n');
         dbg_println(s);
+        
+        if (jog_flow_control() == JogFlowControl::Window) {
+            ++s_jog_window;
+        }
         return;
     }
 #endif
     send_line(s);
 }
 
-static volatile int      s_jog_inflight     = 0;
-static uint32_t          s_jog_inflight_ms  = 0;  // last send/ack — for stale recovery
-static const uint32_t    JOG_INFLIGHT_STALE_MS = 300;
-
-void jog_mark_sent() {
-    ++s_jog_inflight;
-    s_jog_inflight_ms = milliseconds();
-}
-void jog_reset_inflight() {
-    s_jog_inflight = 0;
-}
-int jog_inflight() {
-    if (s_jog_inflight > 0 && (milliseconds() - s_jog_inflight_ms) > JOG_INFLIGHT_STALE_MS) {
-        s_jog_inflight = 0;  // ack(s) presumed lost / FluidNC quiet — recover
+JogFlowControl jog_flow_control() {
+#ifdef USE_WIFI
+    if (wifi_use_uart_mode()) {
+        return JogFlowControl::Blocking;
     }
-    return s_jog_inflight;
+    if (wifi_use_espnow_mode()) {
+        return JogFlowControl::Timed;
+    }
+    return JogFlowControl::Window;
+#else
+    return JogFlowControl::Blocking;
+#endif
 }
+
+void send_jog_cancel() {
+#ifdef USE_WIFI
+    if (!wifi_use_uart_mode() && !wifi_use_espnow_mode()) {
+        wifi_discard_pending_text();
+        jog_window_reset();
+    }
+#endif
+    fnc_realtime(JogCancel);
+}
+
 static void vsend_linef(const char* fmt, va_list va) {
     static char buf[128];
     vsnprintf(buf, 128, fmt, va);
@@ -317,6 +334,9 @@ extern "C" void show_error(int error) {
 #endif
     errorExpire = milliseconds() + 1000;
     lastError   = error;
+    if (s_jog_window > 0) {
+        --s_jog_window;  // a rejected jog  ends 1 outstanding line
+    }
     if (json_in_progress()) {
         // "error:N" without a JSON wrapper ends an in-flight document.
         json_reset_depth();
@@ -335,10 +355,8 @@ extern "C" void show_ok() {
 #ifdef FNC_RX_TRACE
     dbg_printf("[rx-ok]\n");
 #endif
-    
-    if (s_jog_inflight > 0) {
-        --s_jog_inflight;
-        s_jog_inflight_ms = milliseconds();
+    if (s_jog_window > 0) {
+        --s_jog_window;
     }
     if (json_in_progress()) {
         // "ok" ends a reply; if a torn JSON doc was in flight, clean up.

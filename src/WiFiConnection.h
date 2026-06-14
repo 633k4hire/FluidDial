@@ -76,6 +76,7 @@ void          wifi_set_transport(TransportMode mode);
 
 bool wifi_use_uart_mode();
 bool wifi_use_espnow_mode();
+void wifi_discard_pending_text();
 
 void wifi_set_uart_mode(bool uart);
 

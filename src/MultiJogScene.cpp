@@ -9,12 +9,15 @@
 #include "System.h"  // dbg_printf()
 
 //   Jog tracing — enable with -DJOG_TRACE
+//   flow: 0=Blocking(UART) 1=Timed(ESP-NOW horizon) 2=Window(Telnet ok-count)
+//   o=<outstanding queue ms, Timed>  w=<un-acked $J lines, Window>
 //   J s  send   t=<ms> a=<accum> dt=<ms since last send> f=<feed mm/min>
-//               e=<estimated exec ms> o=<outstanding queue ms> b=<send block ms>
+//               e=<estimated exec ms> o=<...> w=<...> b=<send block ms>
 //   J rev        direction reversal -> JogCancel issued
-//   J DROP       jog skipped because outstanding queue >= QUEUE_CAP_MS
+//   J DROP       dynamic jog skipped: flow control says hold (o>=cap or w>=window)
 //   J STOP       dial-still timeout -> jog cancelled
 //   J P  send   precise-mode send (b=<send block ms>)
+//   J WAIT queue precise: holding because flow control says hold (see o / w)
 #ifdef JOG_TRACE
 #    define JOG_DBG(...) dbg_printf(__VA_ARGS__)
 #else
@@ -124,9 +127,9 @@ private:
     // jog command per MPG_INTERVAL_MS to avoid flooding FluidNC's planner queue.
     static const uint32_t MPG_INTERVAL_MS = 30;   // min spacing between jog commands
     static const uint32_t MPG_STOP_MS     = 280;  // dial-still time that ends a jog
-    static const uint32_t QUEUE_CAP_MS    = 180;  // max motion kept buffered ahead
-    
-    static const int      JOG_MAX_INFLIGHT = 3;
+    static const uint32_t QUEUE_CAP_MS    = 180;  // max motion kept buffered ahead (Timed)
+
+    static const int      JOG_WINDOW = 8;
 
     static const uint32_t CANCEL_RESEND_MS = 80;
     static const uint32_t CANCEL_MIN_MS    = 250;
@@ -140,6 +143,35 @@ private:
     bool     _cancel_pending   = false;
     uint32_t _cancel_req_ms    = 0;
     uint32_t _last_cancel_ms   = 0;
+
+    uint32_t jog_outstanding_ms(uint32_t now) const {
+        int32_t remaining = (int32_t)(_jog_drain_ms - now);
+        return remaining > 0 ? (uint32_t)remaining : 0;
+    }
+
+    bool jog_send_blocked(uint32_t now) {
+        switch (jog_flow_control()) {
+            case JogFlowControl::Window:
+                return jog_window_outstanding() >= JOG_WINDOW;
+            case JogFlowControl::Timed:
+                return jog_outstanding_ms(now) >= QUEUE_CAP_MS;
+            default:
+                return false;
+        }
+    }
+
+    void reset_jog_runtime() {
+        _continuous       = false;
+        _mpg_jogging      = false;
+        _mpg_accum        = 0;
+        _last_mpg_ms      = 0;
+        _last_mpg_tick_ms = 0;
+        _jog_dir          = 0;
+        _jog_drain_ms     = 0;
+        _cancel_pending   = false;
+        _cancelling       = false;
+        _cancel_held      = false;
+    }
 
 public:
     MultiJogScene() : Scene("Jog", 4, jog_help_text) {}
@@ -341,16 +373,9 @@ public:
     }
     void cancel_jog() {
         bool was_jogging = _continuous || _mpg_jogging || (state == Jog);
-        _continuous       = false;
-        _mpg_jogging      = false;
-        _mpg_accum        = 0;
-        _last_mpg_ms      = 0;
-        _last_mpg_tick_ms = 0;
-        _jog_dir          = 0;
-        _jog_drain_ms     = 0;
-        jog_reset_inflight();
+        reset_jog_runtime();
         if (was_jogging) {
-            fnc_realtime(JogCancel);
+            send_jog_cancel();
             _cancel_pending = true;
             _cancelling     = true;
             _cancel_req_ms  = millis();
@@ -564,6 +589,13 @@ public:
     }
 
     void service_mpg(bool force = false) {
+        if (state == Disconnected) {
+            reset_jog_runtime();
+            return;
+        }
+        if (_cancel_pending) {
+            return;
+        }
         if (_mpg_accum == 0) {
             return;
         }
@@ -573,16 +605,17 @@ public:
         }
 
         int dir = (_mpg_accum > 0) ? 1 : -1;
+        JogFlowControl flow = jog_flow_control();
 
         if (_jog_dir != 0 && dir != _jog_dir) {
             JOG_DBG("J rev t=%u %d->%d\n", (unsigned)now, _jog_dir, dir);
-            fnc_realtime(JogCancel);
-            jog_reset_inflight();
+            send_jog_cancel();
+            _cancel_pending = true;
+            _cancelling     = true;
+            _cancel_req_ms  = now;
+            _last_cancel_ms = now;
+            _jog_dir        = 0;
             _jog_drain_ms = now;
-        }
-
-        if (!force && jog_inflight() >= JOG_MAX_INFLIGHT) {
-            JOG_DBG("J WAIT t=%u a=%d if=%d\n", (unsigned)now, _mpg_accum, jog_inflight());
             return;
         }
 
@@ -603,9 +636,11 @@ public:
         e4_t     f_min  = e4_from_int(inInches ? 40 : 1000);
         e4_t     feed   = (feed64 > f_max) ? f_max : (feed64 < f_min ? f_min : (e4_t)feed64);
 
-        uint32_t outstanding = (_jog_drain_ms > now) ? (_jog_drain_ms - now) : 0;
-        if (!force && outstanding >= QUEUE_CAP_MS) {
-            JOG_DBG("J DROP t=%u a=%d o=%u\n", (unsigned)now, _mpg_accum, (unsigned)outstanding);
+        uint32_t outstanding =
+            flow == JogFlowControl::Timed ? jog_outstanding_ms(now) : 0;
+        if (jog_send_blocked(now)) {
+            JOG_DBG("J DROP t=%u a=%d w=%d o=%u\n", (unsigned)now, _mpg_accum,
+                    jog_window_outstanding(), (unsigned)outstanding);
             _mpg_accum   = 0;
             _last_mpg_ms = now;
             return;
@@ -614,18 +649,19 @@ public:
         int      acc = _mpg_accum;  // captured for trace
         uint32_t t0  = millis();
         send_mpg_jog(_mpg_accum, feed);
-        jog_mark_sent();
-        uint32_t blk = millis() - t0;  // time spent ack-gated waiting for the prior "ok"
+        uint32_t blk = millis() - t0;
         _jog_dir = dir;
 
         // Track the estimated buffer drain time
         uint32_t exec_ms = (uint32_t)((int64_t)move * 60000 / feed);
-        uint32_t base    = (_jog_drain_ms > now) ? _jog_drain_ms : now;
-        _jog_drain_ms    = base + exec_ms;
+        if (flow == JogFlowControl::Timed) {
+            _jog_drain_ms = now + outstanding + exec_ms;
+        }
 
-        JOG_DBG("J s t=%u a=%d dt=%u f=%ld e=%u o=%u b=%u\n",
+        JOG_DBG("J s t=%u a=%d dt=%u f=%ld e=%u o=%u w=%d b=%u flow=%d\n",
                 (unsigned)now, acc, (unsigned)dt, (long)(feed / 10000),
-                (unsigned)exec_ms, (unsigned)outstanding, (unsigned)blk);
+                (unsigned)exec_ms, (unsigned)outstanding,
+                jog_window_outstanding(), (unsigned)blk, (int)flow);
 
         _mpg_accum   = 0;
         _last_mpg_ms = now;
@@ -634,22 +670,42 @@ public:
     // Precise mode: move by exactly (detents x step size). Each finite $J
     // completes on its own, so the final position always equals the dialed-in count
     void precise_flush() {
+        if (state == Disconnected) {
+            reset_jog_runtime();
+            return;
+        }
         if (_mpg_accum == 0) {
             return;
         }
         uint32_t now = millis();
         if ((now - _last_mpg_ms) >= MPG_INTERVAL_MS) {
-            if (jog_inflight() >= JOG_MAX_INFLIGHT) {
-                JOG_DBG("J WAIT t=%u a=%d if=%d\n", (unsigned)now, _mpg_accum, jog_inflight());
+            JogFlowControl flow = jog_flow_control();
+            e4_t     move = mpg_move_distance(_mpg_accum);
+            e4_t     feed = e4_from_int(inInches ? 400 : 10000);
+            uint32_t outstanding =
+                flow == JogFlowControl::Timed ? jog_outstanding_ms(now) : 0;
+            if (jog_send_blocked(now)) {
+                JOG_DBG("J WAIT queue t=%u a=%d w=%d o=%u\n",
+                        (unsigned)now, _mpg_accum,
+                        jog_window_outstanding(), (unsigned)outstanding);
                 return;
             }
+
             _cancel_pending = false;
             _cancelling     = false;
             int      acc = _mpg_accum;
             uint32_t t0  = millis();
-            send_mpg_jog(_mpg_accum, e4_from_int(inInches ? 400 : 10000));
-            jog_mark_sent();
-            JOG_DBG("J P t=%u a=%d b=%u\n", (unsigned)now, acc, (unsigned)(millis() - t0));
+            send_mpg_jog(_mpg_accum, feed);
+
+            uint32_t exec_ms = (uint32_t)((int64_t)move * 60000 / feed);
+            if (flow == JogFlowControl::Timed) {
+                _jog_drain_ms = now + outstanding + exec_ms;
+            }
+
+            JOG_DBG("J P t=%u a=%d e=%u o=%u w=%d b=%u flow=%d\n",
+                    (unsigned)now, acc, (unsigned)exec_ms,
+                    (unsigned)outstanding, jog_window_outstanding(),
+                    (unsigned)(millis() - t0), (int)flow);
             _mpg_accum   = 0;
             _last_mpg_ms = now;
         }
@@ -679,6 +735,10 @@ public:
     }
 
     void onPoll() override {
+        if (state == Disconnected) {
+            reset_jog_runtime();
+            return;
+        }
         if (dynamic_jog_active()) {
             service_mpg();
             // Stop jogging once the dial has been still long enough
@@ -702,20 +762,20 @@ public:
             if ((state != Jog && since >= CANCEL_MIN_MS) || since >= CANCEL_MAX_MS) {
                 _cancel_pending = false;
             } else if ((now - _last_cancel_ms) >= CANCEL_RESEND_MS) {
-                fnc_realtime(JogCancel);
+                send_jog_cancel();
                 _last_cancel_ms = now;
             }
         }
     }
 
     void onDROChange() {
-        reDisplay();
+        request_redisplay();
     }
     void onLimitsChange() {
-        reDisplay();
+        request_redisplay();
     }
     void onAlarm() {
-        reDisplay();
+        request_redisplay();
     }
     void onExit() {
         cancel_jog();

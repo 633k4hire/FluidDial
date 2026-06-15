@@ -26,7 +26,6 @@
 #define PREF_NAMESPACE             "fluidespnow"
 #define ESPNOW_PAIR_CHANNEL        1
 #define BEACON_INTERVAL_MS         250
-#define PAIRING_SESSION_LIFETIME_MS 60000
 #define PAIR_RESULT_TIMEOUT_MS     5000
 #define PAIR_CONFIRM_RETRY_MS      300
 #define PAIR_COMPLETE_RETRY_MS     100
@@ -220,7 +219,6 @@ static uint32_t         _pairing_last_completion_ms = 0;
 static uint32_t         _pairing_last_confirm_ms = 0;
 static uint32_t         _pairing_await_result_ms = 0;
 static uint32_t         _beacon_last_ms   = 0;
-static uint32_t         _pairing_start_ms = 0;
 static uint8_t          _probe_idx        = 0;
 
 static uint8_t  _reconnect_probe_idx = 0;
@@ -1397,16 +1395,6 @@ void espnow_poll() {
         return;
     }
 
-    if ((now - _pairing_start_ms) >= PAIRING_SESSION_LIFETIME_MS) {
-        clear_temporary_pairing_peer();
-        clear_pairing_secrets();
-        _pairing_start_ms = now;
-        new_pairing_session_id();
-        _pairing_keypair_valid =
-            ESPNowCrypto::generateEcdhKeypair(_pairing_private_key, _pairing_public_key);
-        set_link_state(LinkState::Discovering);
-    }
-
     if (_link_state == LinkState::Confirming) {
         static uint32_t last_result_wait_log_ms = 0;
         if (!_pairing_completion_pending &&
@@ -1582,7 +1570,6 @@ void espnow_start_pairing() {
         ESPNowCrypto::generateEcdhKeypair(_pairing_private_key, _pairing_public_key);
     new_pairing_session_id();
 
-    _pairing_start_ms = millis();
     set_link_state(LinkState::Discovering);
     _pairing_complete = false;
     _beacon_last_ms   = 0;

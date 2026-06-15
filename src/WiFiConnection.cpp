@@ -47,6 +47,8 @@ extern const char* git_info;
 #define TEST_FLUIDNC_IP    "192.168.0.1"
 #define RX_BUF_SIZE        2048
 #define TX_BUF_SIZE        512
+#define TX_PENDING_SIZE    2048
+#define RT_PENDING_SIZE    32
 #define STATUS_POLL_MS     500         // Send '?' every 500 ms while connected
 #define WIFI_RETRY_DELAY_MS 15000     // Retry WiFi.begin() this long after a failure
 #define DNS_RETRY_DELAY_MS  5000     // Retry hostname resolution this long after a failure
@@ -97,6 +99,13 @@ static int     _rx_tail = 0;
 // Line buffer for outgoing text (GCode / $ commands).
 static uint8_t _tx_buf[TX_BUF_SIZE];
 static int     _tx_len = 0;
+static uint8_t _tx_pending[TX_PENDING_SIZE];
+static int     _tx_pending_head = 0;
+static int     _tx_pending_tail = 0;
+static uint8_t _rt_pending[RT_PENDING_SIZE];
+static int     _rt_pending_head = 0;
+static int     _rt_pending_tail = 0;
+static bool    _rt_status_pending = false;
 
 // Timers.
 static uint32_t _last_status_ms = 0;
@@ -192,9 +201,24 @@ static void tcp_close() {
     }
     _tcp_connect_deadline_ms = 0;
     _ws_connected = false;
+    _tx_len = 0;
+    _tx_pending_head = 0;
+    _tx_pending_tail = 0;
+    _rt_pending_head = 0;
+    _rt_pending_tail = 0;
+    _rt_status_pending = false;
+    _rx_tail = _rx_head;
     // Any JSON document still being streamed across chunks is now lost;
     // reset the depth tracker so the next document starts cleanly.
     json_reset_depth();
+}
+
+static void tcp_fail_and_reconnect() {
+    tcp_close();
+    set_disconnected_state();
+    if (_ws_started) {
+        _tcp_next_try_ms = millis() + TCP_RECONNECT_DELAY_MS;
+    }
 }
 
 static void tcp_apply_opts(int fd) {
@@ -344,45 +368,128 @@ static const char* wifi_status_name(wl_status_t status) {
     }
 }
 
-// Bulk send over the raw socket. `flags` is passed to send(); pass MSG_DONTWAIT
-// for the gcode/jog stream so a backpressured socket never blocks the main loop
-// (see ws_send_text). transient EAGAIN drops the remainder of this flush but
-// keeps the socket so the in-flight document survives. Any other errno tears the
-// socket down so wifi_poll() can reconnect.
-static bool tcp_send_all(const uint8_t* payload, size_t length, int flags) {
+static int tcp_realtime_pending_free() {
+    int used = (_rt_pending_head - _rt_pending_tail + RT_PENDING_SIZE) %
+               RT_PENDING_SIZE;
+    return RT_PENDING_SIZE - used - 1;
+}
+
+static bool tcp_flush_realtime() {
+    while (_sock >= 0 && _rt_pending_tail != _rt_pending_head) {
+        uint8_t c = _rt_pending[_rt_pending_tail];
+        ssize_t n = ::send(_sock, &c, 1, MSG_DONTWAIT);
+        if (n == 1) {
+            _rt_pending_tail = (_rt_pending_tail + 1) % RT_PENDING_SIZE;
+            if (c == '?') {
+                _rt_status_pending = false;
+            }
+            continue;
+        }
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            return true;
+        }
+
+        dbg_printf("Telnet: realtime send errno=%d\n", n < 0 ? errno : 0);
+        tcp_fail_and_reconnect();
+        return false;
+    }
+    return _sock >= 0;
+}
+
+static bool tcp_queue_realtime(const uint8_t* payload, size_t length) {
     if (_sock < 0 || length == 0) {
         return _sock >= 0;
     }
-    size_t off = 0;
-    while (off < length) {
-        ssize_t n = ::send(_sock, payload + off, length - off, flags);
-        if (n <= 0) {
-            int e = errno;
-            if (e == EAGAIN || e == EWOULDBLOCK) {
-                dbg_printf("Telnet: send EAGAIN dropped=%u of %u\n",
-                           (unsigned)(length - off), (unsigned)length);
-                return true;
-            }
-            dbg_printf("Telnet: send errno=%d off=%u/%u\n",
-                       e, (unsigned)off, (unsigned)length);
-            tcp_close();
-            set_disconnected_state();
+
+    for (size_t i = 0; i < length; ++i) {
+        uint8_t c = payload[i];
+        if (c == '?' && _rt_status_pending) {
+            continue;
+        }
+        if (tcp_realtime_pending_free() == 0) {
+            dbg_println("Telnet: realtime queue saturated");
+            tcp_fail_and_reconnect();
             return false;
         }
-        off += (size_t)n;
+        if (c == JogCancel) {
+            _rt_pending_tail =
+                (_rt_pending_tail + RT_PENDING_SIZE - 1) % RT_PENDING_SIZE;
+            _rt_pending[_rt_pending_tail] = c;
+        } else {
+            _rt_pending[_rt_pending_head] = c;
+            _rt_pending_head = (_rt_pending_head + 1) % RT_PENDING_SIZE;
+        }
+        if (c == '?') {
+            _rt_status_pending = true;
+        }
     }
-    return true;
+    return tcp_flush_realtime();
 }
 
-// Keep the ws_send_text/ws_send_bin spellings for the ws_putchar
-// callsites — both go through the same raw send() now.
+static int tcp_tx_pending_free() {
+    int used = (_tx_pending_head - _tx_pending_tail + TX_PENDING_SIZE) %
+               TX_PENDING_SIZE;
+    return TX_PENDING_SIZE - used - 1;
+}
+
+static bool tcp_flush_text() {
+    while (_sock >= 0 && _tx_pending_tail != _tx_pending_head) {
+        int contiguous = _tx_pending_head > _tx_pending_tail
+                             ? _tx_pending_head - _tx_pending_tail
+                             : TX_PENDING_SIZE - _tx_pending_tail;
+        ssize_t n = ::send(_sock, _tx_pending + _tx_pending_tail,
+                           (size_t)contiguous, MSG_DONTWAIT);
+        if (n > 0) {
+            _tx_pending_tail =
+                (_tx_pending_tail + (int)n) % TX_PENDING_SIZE;
+            continue;
+        }
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            return true;
+        }
+
+        dbg_printf("Telnet: queued send errno=%d\n", n < 0 ? errno : 0);
+        tcp_fail_and_reconnect();
+        return false;
+    }
+    return _sock >= 0;
+}
+
+static bool tcp_flush_outgoing() {
+    if (!tcp_flush_realtime()) {
+        return false;
+    }
+    if (_rt_pending_tail != _rt_pending_head) {
+        return true;
+    }
+    return tcp_flush_text();
+}
+
+// Keep the ws_send_text/ws_send_bin spellings for the ws_putchar callsites.
+// Text is queued nonblocking; realtime controls bypass that queue.
 static bool ws_send_text(uint8_t* payload, size_t length) {
-    return tcp_send_all(payload, length, MSG_DONTWAIT);
+    if (_sock < 0 || length == 0) {
+        return _sock >= 0;
+    }
+    if (length > (size_t)tcp_tx_pending_free()) {
+        dbg_printf("Telnet: TX queue saturated (%u B pending, %u B new)\n",
+                   (unsigned)((_tx_pending_head - _tx_pending_tail +
+                               TX_PENDING_SIZE) % TX_PENDING_SIZE),
+                   (unsigned)length);
+        tcp_fail_and_reconnect();
+        return false;
+    }
+
+    for (size_t i = 0; i < length; ++i) {
+        _tx_pending[_tx_pending_head] = payload[i];
+        _tx_pending_head = (_tx_pending_head + 1) % TX_PENDING_SIZE;
+    }
+    return tcp_flush_outgoing();
 }
 
-// Realtime bytes ('?', '!', '~', JogCancel, …): kept blocking
+// Realtime bytes ('?', '!', '~', JogCancel, ...) have priority over queued text
 static bool ws_send_bin(const uint8_t* payload, size_t length) {
-    return tcp_send_all(payload, length, 0);
+    return tcp_queue_realtime(payload, length);
 }
 
 // Pull bytes off the socket and push them into the RX ring buffer. Called
@@ -411,12 +518,10 @@ static void tcp_refill_rx() {
         if (n <= 0) {
             if (n == 0) {
                 dbg_println("Telnet: peer closed");
-                tcp_close();
-                set_disconnected_state();
+                tcp_fail_and_reconnect();
             } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
                 dbg_printf("Telnet: recv errno=%d\n", errno);
-                tcp_close();
-                set_disconnected_state();
+                tcp_fail_and_reconnect();
             }
             return;
         }
@@ -534,6 +639,11 @@ void wifi_set_transport(TransportMode mode) {
 
 bool wifi_use_uart_mode()   { return wifi_get_transport() == TransportMode::UART; }
 bool wifi_use_espnow_mode() { return wifi_get_transport() == TransportMode::ESPNOW; }
+
+void wifi_discard_pending_text() {
+    _tx_len          = 0;
+    _tx_pending_tail = _tx_pending_head;
+}
 
 void wifi_set_uart_mode(bool uart) {
     wifi_set_transport(uart ? TransportMode::UART : TransportMode::WIFI);
@@ -1763,6 +1873,7 @@ void wifi_poll() {
         if (_connecting_fd >= 0) {
             tcp_poll_connect();
         } else if (_sock >= 0) {
+            tcp_flush_outgoing();
             tcp_refill_rx();
             // RX-stall watchdog. A healthy FluidNC answers the 500 ms '?' polls,
             // so prolonged total silence on a live socket means it's wedged half-open

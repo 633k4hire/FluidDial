@@ -21,6 +21,12 @@ enum state_t {
     Disconnected,  // We can't talk to FluidNC
 };
 
+enum class JogFlowControl : uint8_t {
+    Blocking,  // UART: send_jog_line() waits for the response itself
+    Timed,     // Lossy networked (ESP-NOW): bound queued motion by estimated execution time
+    Window,    // Reliable networked (Telnet): bound un-acked $J lines (ok-counting)
+};
+
 // Variables and functions to model the state of the FluidNC controller
 
 extern state_t     state;
@@ -47,12 +53,14 @@ extern uint32_t           mySelectedTool;
 int num_digits();
 
 void send_line(const char* s, int timeout = 2000);
-void send_jog_line(const char* s);  // jog send without the "ok" handshake
+void send_jog_line(const char* s);  // nonblocking network jog send
 void send_linef(const char* fmt, ...);
 
-void jog_mark_sent();       // record that a jog line was just streamed
-int  jog_inflight();        // jogs sent but not yet acked (self-heals if stalled)
-void jog_reset_inflight();  // clear (on JogCancel / jog stop)
+JogFlowControl jog_flow_control();
+void send_jog_cancel();
+
+int  jog_window_outstanding();
+void jog_window_reset();
 
 const char* intToCStr(int val);
 const char* axisNumToCStr(int axis);

@@ -14,6 +14,8 @@
 #include <string.h>
 #include <string>
 
+extern Scene menuScene;
+
 static constexpr int ITEM_H_ROUND     = 40;
 static constexpr int ITEM_PITCH_ROUND = 50;
 static constexpr int ITEM_H_CYD       = 34;
@@ -112,11 +114,7 @@ void ESPNowMachineScene::onEncoder(int delta) {
 void ESPNowMachineScene::activateSelected() {
     if (_selected < _profile_count) {
         if (espnow_select_profile((size_t)_selected)) {
-            if (parent_scene()) {
-                pop_scene();
-            } else {
-                activate_scene(&wifiSetupScene);
-            }
+            activate_at_top_level(&menuScene);
         } else {
             _profile_count = (int)espnow_profile_count();
             if (_selected >= itemCount()) {

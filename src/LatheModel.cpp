@@ -96,6 +96,9 @@ void request_lathe_status(bool force) {
     if (state == Disconnected) {
         return;
     }
+    if (!force && s_status.known && !s_status.available) {
+        return;
+    }
 
     uint32_t now = millis();
     if (!force && s_last_status_request_ms != 0 && (uint32_t)(now - s_last_status_request_ms) < 500) {
@@ -191,6 +194,10 @@ bool lathe_consume_status_error() {
         return false;
     }
     if ((uint32_t)(millis() - s_last_status_request_ms) > 2000) {
+        s_status_reply_expected = false;
+        return false;
+    }
+    if (s_status.known && s_status.available) {
         s_status_reply_expected = false;
         return false;
     }

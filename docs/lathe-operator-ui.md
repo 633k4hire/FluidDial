@@ -13,7 +13,9 @@ FluidDial sends:
 If FluidNC returns `cmd:"421"` with `Lathe enabled=true`, FluidDial switches the
 Status, Jog, Home, Probe, and Tools scenes to the lathe profile. If `ESP421` is
 absent, errors, or reports `Lathe enabled=false`, FluidDial keeps the existing
-generic X/Y/Z UI active.
+generic X/Y/Z UI active. When `ESP421` is absent, FluidDial caches that result
+for the current connection and does not keep re-probing from generic scenes;
+reconnect to probe again after changing controller firmware or config.
 
 ## Axis Mapping
 

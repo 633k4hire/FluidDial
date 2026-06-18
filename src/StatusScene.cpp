@@ -147,7 +147,7 @@ public:
         } else {
             dbg_printf("StatusScene: onEntry arg=%s\r\n", arg ? (const char*)arg : "null");
         }
-        request_lathe_status(true);
+        request_lathe_status();
     }
 
     void onDialButtonPress() {
@@ -182,7 +182,7 @@ public:
             reDisplay();
         }
         fnc_realtime(StatusReport);  // sometimes you want an extra status
-        request_lathe_status(true);
+        request_lathe_status();
     }
 
     void onRedButtonPress() {

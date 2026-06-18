@@ -4,6 +4,8 @@
 #include <string>
 #include "Scene.h"
 #include "e4math.h"
+#include "LatheModel.h"
+#include "MachineProfile.h"
 
 class ProbingScene : public Scene {
 private:
@@ -17,6 +19,8 @@ private:
     int  _retract = 20;
     int  _axis    = 2;  // Z is default
 
+    const char* axis_pref_name() { return machine_profile_is_lathe() ? "LatheAxis" : "Axis"; }
+
 public:
     ProbingScene() : Scene("Probe") {}
 
@@ -26,7 +30,7 @@ public:
         // G38.2 G91 F80 Z-20 P8.00
         switch (state) {
             case Idle:
-                send_linef("G38.2G91F%d%c%dP%s", _rate, axisNumToChar(_axis), _travel, e4_to_cstr(_offset, 2));
+                send_linef("G38.2G91F%d%c%dP%s", _rate, profile_axis_char(_axis), _travel, e4_to_cstr(_offset, 2));
                 break;
             case Cycle:
                 fnc_realtime(FeedHold);
@@ -48,7 +52,7 @@ public:
             return;
         } else if (state == Idle) {
             int retract = _travel < 0 ? _retract : -_retract;
-            send_linef("$J=G91F1000%c%d", axisNumToChar(_axis), retract);
+            send_linef("$J=G91F1000%c%d", profile_axis_char(_axis), retract);
             return;
         } else if (state == Hold || state == DoorClosed) {
             fnc_realtime(Reset);
@@ -90,20 +94,27 @@ public:
                     setPref("Retract", _retract);
                     break;
                 case 4:
-                    rotateNumberLoop(_axis, 1, 0, 2);
-                    setPref("Axis", _axis);
+                    rotateNumberLoop(_axis, 1, 0, profile_axis_count() - 1);
+                    setPref(axis_pref_name(), _axis);
             }
             reDisplay();
         }
     }
     void onEntry(void* arg) override {
+        _axis = machine_profile_is_lathe() ? 1 : 2;
+        if (lathe_mode_active()) {
+            request_lathe_status();
+        }
         if (initPrefs()) {
             static_assert(sizeof(e4_t) == sizeof(int));
             getPref("Offset", reinterpret_cast<int *>(&_offset));
             getPref("Travel", &_travel);
             getPref("Rate", &_rate);
             getPref("Retract", &_retract);
-            getPref("Axis", &_axis);
+        }
+        getPref(axis_pref_name(), &_axis);
+        if (_axis < 0 || _axis >= profile_axis_count()) {
+            _axis = machine_profile_is_lathe() ? 1 : 2;
         }
     }
 
@@ -128,7 +139,7 @@ public:
             button.draw("Feed Rate", intToCStr(_rate), selection == 2);
 
             button.draw("Retract", intToCStr(_retract), selection == 3);
-            button.draw("Axis", axisNumToCStr(_axis), selection == 4);
+            button.draw("Axis", profile_axis_cstr(_axis), selection == 4);
 
             //LED led(x - 20, y + height / 2, 10, button.gap());
             //led.draw(myProbeSwitch);
@@ -151,9 +162,9 @@ public:
 
                 int width = display_short_side() - x * 2;
                 DRO dro(x, y, width, height);
-                dro.draw(0, _axis == 0);
-                dro.draw(1, _axis == 1);
-                dro.draw(2, _axis == 2);
+                for (int axis = 0; axis < profile_axis_count(); ++axis) {
+                    dro.draw(axis, _axis == axis);
+                }
 
                 switch (state) {
                     case Cycle:

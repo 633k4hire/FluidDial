@@ -7,6 +7,8 @@
 #include "ConfirmScene.h"
 #include "e4math.h"
 #include "System.h"  // dbg_printf()
+#include "LatheModel.h"
+#include "MachineProfile.h"
 
 //   Jog tracing — enable with -DJOG_TRACE
 //   flow: 0=Blocking(UART) 1=Timed(ESP-NOW horizon) 2=Window(Telnet ok-count)
@@ -283,7 +285,7 @@ public:
                 std::string dialLegend("Zero");
                 for (int axis = 0; axis < num_axes; axis++) {
                     if (selected(axis)) {
-                        dialLegend += axisNumToChar(axis);
+                        dialLegend += profile_axis_char(axis);
                     }
                 }
                 drawButtonLegends("Jog-", "Jog+", dialLegend.c_str());
@@ -295,7 +297,7 @@ public:
         std::string cmd = "G10L20P0";
         for (int axis = 0; axis < num_axes; axis++) {
             if (selected(axis)) {
-                cmd += axisNumToChar(axis);
+                cmd += profile_axis_char(axis);
                 cmd += "0";
             }
         }
@@ -304,6 +306,9 @@ public:
     void onEntry(void* arg) {
         if (arg && strcmp((const char*)arg, "Confirmed") == 0) {
             zero_axes();
+        }
+        if (lathe_mode_active()) {
+            request_lathe_status();
         }
         if (initPrefs()) {
             for (size_t axis = 0; axis < 3; axis++) {
@@ -325,7 +330,7 @@ public:
 
         for (int axis = 0; axis < num_axes; axis++) {
             if (selected(axis)) {
-                confirmMsg += axisNumToChar(axis);
+                confirmMsg += profile_axis_char(axis);
             }
         }
         confirmMsg += " ?";
@@ -528,7 +533,7 @@ public:
         cmd += e4_to_cstr(feed, 0);
         for (int axis = 0; axis < num_axes; ++axis) {
             if (selected(axis)) {
-                cmd += axisNumToChar(axis);
+                cmd += profile_axis_char(axis);
                 cmd += e4_to_cstr(delta * distance(axis), inInches ? 3 : 2);
             }
         }
@@ -563,7 +568,7 @@ public:
                 if (negative) {
                     axis_distance = -axis_distance;
                 }
-                cmd += axisNumToChar(axis);
+                cmd += profile_axis_char(axis);
                 cmd += e4_to_cstr(axis_distance, 0);
             }
         }

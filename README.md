@@ -102,6 +102,17 @@ Configurable Z-probe routine. All parameters are editable on-screen before runni
 | Retract | Distance to retract after contact |
 | Axis | Axis to probe (typically Z) |
 
+### Lathe Operator UI
+
+When connected to a FluidNC build that reports `ESP421` with `Lathe enabled=true`,
+FluidDial automatically switches the operator scenes to a lathe profile. The
+lathe profile displays and commands X/Z/C, adds a lathe dashboard, and provides a
+five-position turret tool UI with T5 labeled as the probe/contact tool.
+
+See [docs/lathe-operator-ui.md](docs/lathe-operator-ui.md) for the axis mapping,
+`ESP421`/`ESP422`/`ESP423` command contract, tool setup, touch-off behavior, and
+threading safety notes.
+
 ---
 
 ## Building and Flashing from Source

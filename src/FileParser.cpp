@@ -7,6 +7,8 @@
 #include "Menu.h"
 #include "GrblParserC.h"  // send_line()
 #include "HomingScene.h"  // set_axis_homed()
+#include "LatheModel.h"
+#include "MachineProfile.h"
 
 #include <JsonStreamingParser.h>
 #include <JsonListener.h>
@@ -508,6 +510,54 @@ public:
     void endDocument() override {}
 } fileLinesListener;
 
+class LatheStatusListener : public JsonListener {
+private:
+    std::string _key;
+    std::string _id;
+    std::string _value;
+    int         _level = 0;
+
+public:
+    void whitespace(char c) override {}
+    void startDocument() override {}
+    void startArray() override {}
+
+    void startObject() override {
+        if (++_level == 1) {
+            _id.clear();
+            _value.clear();
+            _key.clear();
+        }
+    }
+
+    void key(const char* key) override { _key = key ? key : ""; }
+
+    void value(const char* value) override {
+        if (_key == "id") {
+            _id = value ? value : "";
+        } else if (_key == "value") {
+            _value = value ? value : "";
+        }
+        _key.clear();
+    }
+
+    void endObject() override {
+        if (_level == 1 && !_id.empty()) {
+            lathe_set_status_value(_id.c_str(), _value.c_str());
+        }
+        if (_level > 0) {
+            --_level;
+        }
+    }
+
+    void endArray() override {
+        lathe_finish_status_update(true);
+        parser.setListener(pInitialListener);
+    }
+
+    void endDocument() override {}
+} latheStatusListener;
+
 bool is_file(const char* str, const char* filename) {
     const char* s = strstr(str, filename);
     return s && strlen(s) == strlen(filename);
@@ -524,6 +574,7 @@ private:
         ARGUMENT,
         STATUS,
         ERROR,
+        DATA,
     } key_t;
 
     key_t _key;
@@ -531,8 +582,10 @@ private:
     std::string _cmd;
     std::string _argument;
     std::string _status;
+    std::string _data;
 
     bool _is_json_file = false;
+    bool _lathe_data_started = false;
 
     JsonListener* _file_listener = nullptr;
 
@@ -541,7 +594,11 @@ public:
     void startDocument() override {
         _key          = NONE;
         _is_json_file = false;
+        _lathe_data_started = false;
         _status       = "ok";
+        _cmd.clear();
+        _argument.clear();
+        _data.clear();
     }
     void value(const char* value) override {
         switch (_key) {
@@ -574,6 +631,9 @@ public:
             case ERROR:
                 current_scene->onError(value);
                 break;
+            case DATA:
+                _data = value ? value : "";
+                break;
         }
         _key = NONE;
     }
@@ -582,12 +642,25 @@ public:
     void endObject() override { parser_needs_reset = true; }
     void endDocument() override {
         parser_needs_reset = true;
+        if (_cmd == "421" && !_lathe_data_started) {
+            lathe_mark_status_unavailable();
+        }
+        if (_cmd == "422" || _cmd == "423") {
+            lathe_handle_command_response(atoi(_cmd.c_str()), _status == "ok", _data.c_str());
+        }
         if (_status != "ok" && _file_listener) {
             _status = "ok";
             try_next_macro_file(_file_listener);
         }
     }
-    void startArray() override {}
+    void startArray() override {
+        if (_key == DATA && _cmd == "421") {
+            _lathe_data_started = true;
+            _key                = NONE;
+            lathe_begin_status_update();
+            parser.setListener(&latheStatusListener);
+        }
+    }
     void startObject() override {}
 
     void key(const char* key) override {
@@ -622,6 +695,10 @@ public:
         }
         if (strcmp(key, "status") == 0) {
             _key = STATUS;
+            return;
+        }
+        if (strcmp(key, "data") == 0) {
+            _key = DATA;
             return;
         }
         if (strcmp(key, "error") == 0) {
@@ -803,7 +880,10 @@ extern "C" void handle_msg(char* command, char* arguments) {
             const char* letters = "XYZABCUVW";
             const char* pos     = strchr(letters, c);
             if (pos) {
-                set_axis_homed(pos - letters);
+                int display_axis = profile_display_axis_for_machine(pos - letters);
+                if (display_axis >= 0) {
+                    set_axis_homed(display_axis);
+                }
             }
         }
     }

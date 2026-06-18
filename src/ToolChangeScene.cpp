@@ -16,13 +16,26 @@ private:
         TouchOff,
     };
 
+    enum class LathePendingAction {
+        None,
+        ToolChange,
+        TouchOff,
+    };
+
     int       _new_tool = 0;
     int       _lathe_tool = 1;
     LathePage _lathe_page = LathePage::Tools;
+    LathePendingAction _pending_action = LathePendingAction::None;
     int       _setup_selection = 0;
     int       _touch_selection = 0;
     bool      _touch_diameter_mode = true;
     std::string _confirm_message;
+    int       _confirm_tool = 0;
+    e4_t      _confirm_machine_x = 0;
+    e4_t      _confirm_machine_z = 0;
+    e4_t      _confirm_reference_x = 0;
+    e4_t      _confirm_reference_z = 0;
+    bool      _confirm_diameter_mode = true;
 
     e4_t _gx[5] = { 0 };
     e4_t _gz[5] = { 0 };
@@ -90,11 +103,14 @@ private:
 
     void draw_last_command_result(int y) {
         const LatheCommandResult& result = lathe_last_command_result();
-        if (!result.known || (uint32_t)(millis() - result.updated_ms) > 6000) {
+        if (!result.known) {
+            return;
+        }
+        if (!result.pending && (uint32_t)(millis() - result.updated_ms) > 6000) {
             return;
         }
         const char* message = result.message.empty() ? (result.ok ? "OK" : "Error") : result.message.c_str();
-        centered_text(message, y, result.ok ? GREEN : RED, TINY);
+        centered_text(message, y, result.pending ? YELLOW : (result.ok ? GREEN : RED), TINY);
     }
 
     void draw_lathe_tool_list() {
@@ -120,7 +136,7 @@ private:
 
         draw_last_command_result(190);
         const char* red = state == Idle ? "Setup" : (state == Cycle || state == Hold || state == DoorClosed || state == Alarm ? "Reset" : "");
-        const char* green = state == Idle ? "Change" : (state == Cycle ? "Hold" : (state == Hold || state == DoorClosed ? "Resume" : ""));
+        const char* green = state == Idle ? (lathe_command_pending() ? "Wait" : "Change") : (state == Cycle ? "Hold" : (state == Hold || state == DoorClosed ? "Resume" : ""));
         drawButtonLegends(red, green, "Back");
         refreshDisplay();
     }
@@ -146,7 +162,7 @@ private:
         row.draw("O", intToCStr(_orientation[idx]), _setup_selection == 5);
 
         draw_last_command_result(203);
-        drawButtonLegends("Back", "Save", "TouchOff");
+        drawButtonLegends("Back", lathe_command_pending() ? "Wait" : "Save", "TouchOff");
         refreshDisplay();
     }
 
@@ -178,7 +194,7 @@ private:
         row.draw("X Mode", _touch_diameter_mode ? "Diameter" : "Radius", _touch_selection == 2);
 
         draw_last_command_result(190);
-        drawButtonLegends("Setup", "Apply", "Tools");
+        drawButtonLegends("Setup", lathe_command_pending() ? "Wait" : "Apply", "Tools");
         refreshDisplay();
     }
 
@@ -197,11 +213,29 @@ private:
     }
 
     void confirm_lathe_tool_change() {
-        _confirm_message = "Change to T" + std::to_string(_lathe_tool);
-        if (_lathe_tool == 5) {
+        _pending_action = LathePendingAction::ToolChange;
+        _confirm_tool = _lathe_tool;
+        _confirm_message = "Change to T" + std::to_string(_confirm_tool);
+        if (_confirm_tool == 5) {
             _confirm_message += " Probe";
         }
         _confirm_message += "?\nSends T then M6";
+        push_scene(&confirmScene, (void*)_confirm_message.c_str());
+    }
+
+    void confirm_lathe_touch_off() {
+        int idx = tool_index();
+        selected_machine_positions_mm(_confirm_machine_x, _confirm_machine_z);
+        _confirm_tool = _lathe_tool;
+        _confirm_reference_x = _reference_x[idx];
+        _confirm_reference_z = _reference_z[idx];
+        _confirm_diameter_mode = _touch_diameter_mode;
+        _pending_action = LathePendingAction::TouchOff;
+
+        std::string rx = e4_to_cstr(_confirm_reference_x, 3);
+        std::string rz = e4_to_cstr(_confirm_reference_z, 3);
+        _confirm_message = "Apply T" + std::to_string(_confirm_tool) + " touch?";
+        _confirm_message += "\nRX " + rx + " RZ " + rz;
         push_scene(&confirmScene, (void*)_confirm_message.c_str());
     }
 
@@ -398,6 +432,9 @@ public:
         if (state != Idle) {
             return;
         }
+        if (lathe_command_pending()) {
+            return;
+        }
 
         int idx = tool_index();
         if (_lathe_page == LathePage::Tools) {
@@ -405,14 +442,16 @@ public:
         } else if (_lathe_page == LathePage::Setup) {
             lathe_save_tool(_lathe_tool, _gx[idx], _gz[idx], _wx[idx], _wz[idx], _nr[idx], _orientation[idx]);
         } else {
-            e4_t machine_x;
-            e4_t machine_z;
-            selected_machine_positions_mm(machine_x, machine_z);
-            lathe_touch_off_tool(_lathe_tool, machine_x, machine_z, _reference_x[idx], _reference_z[idx], _touch_diameter_mode);
+            confirm_lathe_touch_off();
         }
     }
 
-    void onStateChange(state_t old_state) override { reDisplay(); }
+    void onStateChange(state_t old_state) override {
+        if (lathe_mode_active() && state == Alarm && lathe_command_pending()) {
+            lathe_fail_pending_command("Alarm during command");
+        }
+        reDisplay();
+    }
 
     void onTouchClick() override {
         if (!lathe_mode_active()) {
@@ -437,7 +476,7 @@ public:
     }
 
     void onTouchHold() override {
-        if (lathe_mode_active() && state == Idle && _lathe_page == LathePage::Tools) {
+        if (lathe_mode_active() && state == Idle && _lathe_page == LathePage::Tools && !lathe_command_pending()) {
             lathe_select_tool_logical(_lathe_tool);
         }
     }
@@ -473,7 +512,22 @@ public:
         load_lathe_prefs();
 
         if (arg && strcmp((const char*)arg, "Confirmed") == 0) {
-            lathe_change_tool(_lathe_tool);
+            switch (_pending_action) {
+                case LathePendingAction::ToolChange:
+                    lathe_change_tool(_confirm_tool);
+                    break;
+                case LathePendingAction::TouchOff:
+                    lathe_touch_off_tool(_confirm_tool,
+                                         _confirm_machine_x,
+                                         _confirm_machine_z,
+                                         _confirm_reference_x,
+                                         _confirm_reference_z,
+                                         _confirm_diameter_mode);
+                    break;
+                case LathePendingAction::None:
+                    break;
+            }
+            _pending_action = LathePendingAction::None;
             return;
         }
 

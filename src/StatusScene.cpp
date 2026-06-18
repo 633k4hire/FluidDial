@@ -114,6 +114,9 @@ private:
 
         bool threading_feedback_safe = lathe.encoder_enabled && !lathe.feedback_stale && !lathe.feedback_fault;
 
+        if (!threading_feedback_safe) {
+            drawOutlinedRect(18, 185, display_short_side() - 36, 24, BLACK, RED);
+        }
         draw_info_row(142, "Tool", tool, lathe.active_tool == 5 ? ORANGE : WHITE);
         draw_info_row(160, "RPM", rpm);
         draw_info_row(178, "Modes", modes, GREEN);

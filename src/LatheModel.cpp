@@ -19,6 +19,7 @@ static LatheStatus        s_pending_status;
 static LatheCommandResult s_last_command;
 static uint32_t           s_last_status_request_ms = 0;
 static bool               s_status_reply_expected  = false;
+static int                s_pending_tool_change    = 0;
 
 static std::string lower_copy(const char* value) {
     std::string s = value ? value : "";
@@ -65,6 +66,21 @@ static void apply_status(const LatheStatus& next_status) {
     if (old_lathe_mode != machine_profile_is_lathe()) {
         schedule_action(refresh_homing_for_profile_change);
     }
+    if (s_last_command.pending && s_last_command.command == 6 && s_pending_tool_change > 0) {
+        if (s_status.available && s_status.active_tool == s_pending_tool_change) {
+            s_last_command.ok         = true;
+            s_last_command.pending    = false;
+            s_last_command.message    = "Tool change complete";
+            s_last_command.updated_ms = millis();
+            s_pending_tool_change     = 0;
+        } else if (state == Alarm) {
+            s_last_command.ok         = false;
+            s_last_command.pending    = false;
+            s_last_command.message    = "Tool change alarm";
+            s_last_command.updated_ms = millis();
+            s_pending_tool_change     = 0;
+        }
+    }
     request_redisplay();
 }
 
@@ -74,6 +90,29 @@ static std::string e4_string(e4_t value, int decimals = 4) {
 
 static void scheduled_lathe_status_refresh() {
     request_lathe_status(true);
+}
+
+static void begin_command(int command, const std::string& message) {
+    s_last_command.command    = command;
+    s_last_command.known      = true;
+    s_last_command.ok         = false;
+    s_last_command.pending    = true;
+    s_last_command.message    = message;
+    s_last_command.updated_ms = millis();
+    request_redisplay();
+}
+
+static void finish_command(int command, bool ok, const char* message) {
+    s_last_command.command    = command;
+    s_last_command.known      = true;
+    s_last_command.ok         = ok;
+    s_last_command.pending    = false;
+    s_last_command.message    = message ? message : "";
+    s_last_command.updated_ms = millis();
+    if (command != 6) {
+        s_pending_tool_change = 0;
+    }
+    request_redisplay();
 }
 
 const LatheStatus& lathe_status() {
@@ -90,6 +129,10 @@ bool lathe_status_known() {
 
 bool lathe_mode_active() {
     return status_enables_lathe(s_status);
+}
+
+bool lathe_command_pending() {
+    return s_last_command.pending;
 }
 
 void request_lathe_status(bool force) {
@@ -206,22 +249,30 @@ bool lathe_consume_status_error() {
 }
 
 void lathe_handle_command_response(int command, bool ok, const char* message) {
-    s_last_command.command    = command;
-    s_last_command.known      = true;
-    s_last_command.ok         = ok;
-    s_last_command.message    = message ? message : "";
-    s_last_command.updated_ms = millis();
+    finish_command(command, ok, message);
 
     if (command == 422 || command == 423) {
         schedule_action(scheduled_lathe_status_refresh);
     }
-    request_redisplay();
+}
+
+void lathe_fail_pending_command(const char* message) {
+    if (!s_last_command.pending) {
+        return;
+    }
+    finish_command(s_last_command.command, false, message ? message : "Command failed");
+    s_pending_tool_change = 0;
 }
 
 void lathe_change_tool(int tool) {
     if (tool < 1 || tool > 5) {
         return;
     }
+    if (s_last_command.pending) {
+        return;
+    }
+    s_pending_tool_change = tool;
+    begin_command(6, "Waiting for T/M6");
     send_linef("T%d", tool);
     send_line("M6");
     request_lathe_status(true);
@@ -231,12 +282,19 @@ void lathe_select_tool_logical(int tool) {
     if (tool < 1 || tool > 5) {
         return;
     }
+    if (s_last_command.pending) {
+        return;
+    }
     send_linef("M61Q%d", tool);
+    finish_command(61, true, "Logical tool selected");
     request_lathe_status(true);
 }
 
 void lathe_save_tool(int tool, e4_t gx, e4_t gz, e4_t wx, e4_t wz, e4_t nose_radius, int orientation) {
     if (tool < 1 || tool > 5) {
+        return;
+    }
+    if (s_last_command.pending) {
         return;
     }
 
@@ -247,11 +305,15 @@ void lathe_save_tool(int tool, e4_t gx, e4_t gz, e4_t wx, e4_t wz, e4_t nose_rad
     cmd += " WZ=" + e4_string(wz);
     cmd += " NR=" + e4_string(nose_radius);
     cmd += " O=" + std::to_string(orientation);
+    begin_command(422, "Saving tool");
     send_line(cmd.c_str(), 1000);
 }
 
 void lathe_touch_off_tool(int tool, e4_t machine_x, e4_t machine_z, e4_t reference_x, e4_t reference_z, bool diameter_mode) {
     if (tool < 1 || tool > 5) {
+        return;
+    }
+    if (s_last_command.pending) {
         return;
     }
 
@@ -262,5 +324,6 @@ void lathe_touch_off_tool(int tool, e4_t machine_x, e4_t machine_z, e4_t referen
     cmd += diameter_mode ? "diameter" : "radius";
     cmd += " MZ=" + e4_string(machine_z);
     cmd += " RZ=" + e4_string(reference_z);
+    begin_command(423, "Applying touch-off");
     send_line(cmd.c_str(), 1000);
 }

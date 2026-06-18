@@ -41,6 +41,7 @@ struct LatheCommandResult {
     int         command    = 0;
     bool        known      = false;
     bool        ok         = false;
+    bool        pending    = false;
     std::string message;
     uint32_t    updated_ms = 0;
 };
@@ -50,6 +51,7 @@ const LatheCommandResult& lathe_last_command_result();
 
 bool lathe_status_known();
 bool lathe_mode_active();
+bool lathe_command_pending();
 
 void request_lathe_status(bool force = false);
 void lathe_mark_status_unavailable();
@@ -59,6 +61,7 @@ void lathe_begin_status_update();
 void lathe_set_status_value(const char* id, const char* value);
 void lathe_finish_status_update(bool ok);
 void lathe_handle_command_response(int command, bool ok, const char* message);
+void lathe_fail_pending_command(const char* message);
 
 void lathe_change_tool(int tool);
 void lathe_select_tool_logical(int tool);

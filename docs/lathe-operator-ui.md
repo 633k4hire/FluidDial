@@ -83,6 +83,10 @@ The Tools scene becomes a fixed lathe tool panel with `T1` through `T5`.
 - `T5` is labeled `T5 Probe`.
 - The default tool action requires confirmation.
 - Confirming a tool change sends `Tn`, then `M6`.
+- After confirmation, FluidDial marks the tool change pending until a refreshed
+  `ESP421` report shows the requested active tool or FluidNC enters alarm.
+- While a lathe command is pending, duplicate tool, setup, touch-off, and
+  logical-select actions are ignored and the button legend shows `Wait`.
 - Holding the touch area on the tool list sends the optional logical select
   action `M61Qn`. This is intentionally not the default action.
 - FluidDial refreshes `ESP421` after tool actions.
@@ -118,15 +122,31 @@ The Touch Off page sends manual tool touch-off data with `ESP423`:
 ```
 
 FluidDial reads the current machine X/Z positions from the mapped lathe DRO,
-converts them to millimeters, and sends the operator-entered X/Z reference
-values. X touch-off mode defaults from `ESP421` diameter/radius state and can be
-toggled before applying.
+converts them to millimeters, asks the operator to confirm, and sends the
+operator-entered X/Z reference values. X touch-off mode defaults from `ESP421`
+diameter/radius state and can be toggled before applying.
 
-The existing `G38.2` probing scene remains available and is profile-aware. V1
+The existing `G38.2` probing scene remains available and is profile-aware. V3
 does not automatically convert a probe move into an `ESP423` update; the
 operator still confirms the manual touch-off values.
 
 ## Validation
+
+Run the local protocol harness for fast parser/model checks:
+
+```sh
+python tools/lathe_protocol_harness.py
+```
+
+The harness checks:
+
+- Generic fallback when `ESP421` is unavailable, malformed, unsupported, or
+  reports `Lathe enabled=false`.
+- X/Z/C profile mapping to FluidNC machine axes 0/2/5 and config paths
+  `$/axes/x`, `$/axes/z`, and `$/axes/c`.
+- `ESP421` field parsing for status, modes, active tool, offsets, RPM feedback,
+  encoder/index/stale/fault state, and diameter mode.
+- `ESP422` and `ESP423` ok/error command response handling.
 
 Validated build targets for this implementation:
 

@@ -101,16 +101,31 @@ private:
         z = toMm(myAxes[profile_machine_axis(1)]);
     }
 
+    int command_color(LatheCommandSeverity severity) {
+        switch (severity) {
+            case LatheCommandSeverity::Info:
+                return YELLOW;
+            case LatheCommandSeverity::Success:
+                return GREEN;
+            case LatheCommandSeverity::Warning:
+                return ORANGE;
+            case LatheCommandSeverity::Error:
+                return RED;
+            case LatheCommandSeverity::None:
+                return WHITE;
+        }
+        return WHITE;
+    }
+
     void draw_last_command_result(int y) {
         const LatheCommandResult& result = lathe_last_command_result();
         if (!result.known) {
             return;
         }
-        if (!result.pending && (uint32_t)(millis() - result.updated_ms) > 6000) {
+        if (!result.pending && !result.recoverable && (uint32_t)(millis() - result.updated_ms) > 6000) {
             return;
         }
-        const char* message = result.message.empty() ? (result.ok ? "OK" : "Error") : result.message.c_str();
-        centered_text(message, y, result.pending ? YELLOW : (result.ok ? GREEN : RED), TINY);
+        centered_text(lathe_command_status_text(), y, command_color(lathe_command_severity()), TINY);
     }
 
     void draw_lathe_tool_list() {
@@ -135,8 +150,8 @@ private:
         }
 
         draw_last_command_result(190);
-        const char* red = state == Idle ? "Setup" : (state == Cycle || state == Hold || state == DoorClosed || state == Alarm ? "Reset" : "");
-        const char* green = state == Idle ? (lathe_command_pending() ? "Wait" : "Change") : (state == Cycle ? "Hold" : (state == Hold || state == DoorClosed ? "Resume" : ""));
+        const char* red = (state == Idle && lathe_command_recoverable()) ? "Clear" : (state == Idle ? "Setup" : (state == Cycle || state == Hold || state == DoorClosed || state == Alarm ? "Reset" : ""));
+        const char* green = state == Idle ? (lathe_command_pending() ? "Wait" : (lathe_command_recoverable() ? "" : "Change")) : (state == Cycle ? "Hold" : (state == Hold || state == DoorClosed ? "Resume" : ""));
         drawButtonLegends(red, green, "Back");
         refreshDisplay();
     }
@@ -162,7 +177,7 @@ private:
         row.draw("O", intToCStr(_orientation[idx]), _setup_selection == 5);
 
         draw_last_command_result(203);
-        drawButtonLegends("Back", lathe_command_pending() ? "Wait" : "Save", "TouchOff");
+        drawButtonLegends((state == Idle && lathe_command_recoverable()) ? "Clear" : "Back", lathe_command_blocks_actions() ? (lathe_command_pending() ? "Wait" : "") : "Save", "TouchOff");
         refreshDisplay();
     }
 
@@ -194,7 +209,7 @@ private:
         row.draw("X Mode", _touch_diameter_mode ? "Diameter" : "Radius", _touch_selection == 2);
 
         draw_last_command_result(190);
-        drawButtonLegends("Setup", lathe_command_pending() ? "Wait" : "Apply", "Tools");
+        drawButtonLegends((state == Idle && lathe_command_recoverable()) ? "Clear" : "Setup", lathe_command_blocks_actions() ? (lathe_command_pending() ? "Wait" : "") : "Apply", "Tools");
         refreshDisplay();
     }
 
@@ -215,11 +230,16 @@ private:
     void confirm_lathe_tool_change() {
         _pending_action = LathePendingAction::ToolChange;
         _confirm_tool = _lathe_tool;
-        _confirm_message = "Change to T" + std::to_string(_confirm_tool);
+        const LatheStatus& status = lathe_status();
+        if (status.active_tool > 0) {
+            _confirm_message = "T" + std::to_string(status.active_tool) + " -> T" + std::to_string(_confirm_tool);
+        } else {
+            _confirm_message = "T? -> T" + std::to_string(_confirm_tool);
+        }
         if (_confirm_tool == 5) {
             _confirm_message += " Probe";
         }
-        _confirm_message += "?\nSends T then M6";
+        _confirm_message += "?\nSends T" + std::to_string(_confirm_tool) + " + M6";
         push_scene(&confirmScene, (void*)_confirm_message.c_str());
     }
 
@@ -232,10 +252,14 @@ private:
         _confirm_diameter_mode = _touch_diameter_mode;
         _pending_action = LathePendingAction::TouchOff;
 
-        std::string rx = e4_to_cstr(_confirm_reference_x, 3);
-        std::string rz = e4_to_cstr(_confirm_reference_z, 3);
-        _confirm_message = "Apply T" + std::to_string(_confirm_tool) + " touch?";
-        _confirm_message += "\nRX " + rx + " RZ " + rz;
+        std::string mx = e4_to_cstr(_confirm_machine_x, 2);
+        std::string mz = e4_to_cstr(_confirm_machine_z, 2);
+        std::string rx = e4_to_cstr(_confirm_reference_x, 2);
+        std::string rz = e4_to_cstr(_confirm_reference_z, 2);
+        _confirm_message = "T" + std::to_string(_confirm_tool);
+        _confirm_message += _confirm_diameter_mode ? " Dia " : " Rad ";
+        _confirm_message += "MX" + mx + " MZ" + mz;
+        _confirm_message += "\nRX" + rx + " RZ" + rz;
         push_scene(&confirmScene, (void*)_confirm_message.c_str());
     }
 
@@ -397,6 +421,11 @@ public:
         if (state != Idle) {
             return;
         }
+        if (lathe_command_recoverable()) {
+            lathe_clear_recoverable_command();
+            reDisplay();
+            return;
+        }
 
         if (_lathe_page == LathePage::Tools) {
             _lathe_page = LathePage::Setup;
@@ -432,7 +461,7 @@ public:
         if (state != Idle) {
             return;
         }
-        if (lathe_command_pending()) {
+        if (lathe_command_blocks_actions()) {
             return;
         }
 
@@ -476,8 +505,14 @@ public:
     }
 
     void onTouchHold() override {
-        if (lathe_mode_active() && state == Idle && _lathe_page == LathePage::Tools && !lathe_command_pending()) {
+        if (lathe_mode_active() && state == Idle && _lathe_page == LathePage::Tools && !lathe_command_blocks_actions()) {
             lathe_select_tool_logical(_lathe_tool);
+        }
+    }
+
+    void onPoll() override {
+        if (lathe_mode_active()) {
+            lathe_poll_command();
         }
     }
 

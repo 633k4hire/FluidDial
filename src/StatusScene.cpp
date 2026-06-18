@@ -112,10 +112,11 @@ private:
             encoder_color = YELLOW;
         }
 
-        bool threading_feedback_safe = lathe.encoder_enabled && !lathe.feedback_stale && !lathe.feedback_fault;
+        bool threading_feedback_safe = lathe.encoder_enabled && lathe.encoder_capture && !lathe.feedback_stale && !lathe.feedback_fault;
+        int  safety_color            = (lathe.feedback_fault || lathe.feedback_stale) ? RED : YELLOW;
 
         if (!threading_feedback_safe) {
-            drawOutlinedRect(18, 185, display_short_side() - 36, 24, BLACK, RED);
+            drawOutlinedRect(18, 185, display_short_side() - 36, 24, BLACK, safety_color);
         }
         draw_info_row(142, "Tool", tool, lathe.active_tool == 5 ? ORANGE : WHITE);
         draw_info_row(160, "RPM", rpm);
@@ -124,7 +125,7 @@ private:
                       threading_feedback_safe ? (lathe.diameter_mode ? "G7 Diameter" : "G8 Radius") : "Thread unsafe",
                       encoder_text,
                       encoder_color,
-                      threading_feedback_safe ? DARKGREY : RED);
+                      threading_feedback_safe ? DARKGREY : safety_color);
 
         draw_status_buttons();
 
@@ -269,6 +270,7 @@ public:
         if (!lathe_mode_active()) {
             return;
         }
+        lathe_poll_command();
         uint32_t now = millis();
         if (_last_lathe_refresh_ms == 0 || (uint32_t)(now - _last_lathe_refresh_ms) >= 1500) {
             _last_lathe_refresh_ms = now;

@@ -87,6 +87,12 @@ The Tools scene becomes a fixed lathe tool panel with `T1` through `T5`.
   `ESP421` report shows the requested active tool or FluidNC enters alarm.
 - While a lathe command is pending, duplicate tool, setup, touch-off, and
   logical-select actions are ignored and the button legend shows `Wait`.
+- During a pending tool change, FluidDial refreshes `ESP421` periodically. It
+  does not resend `Tn` or `M6` automatically.
+- If a lathe command times out or FluidNC enters alarm, the Tools scene shows a
+  recoverable error and exposes `Clear`. Clear only removes the pendant-side
+  pending/error state; the operator must verify the physical turret and FluidNC
+  state before sending another tool command.
 - Holding the touch area on the tool list sends the optional logical select
   action `M61Qn`. This is intentionally not the default action.
 - FluidDial refreshes `ESP421` after tool actions.
@@ -122,9 +128,14 @@ The Touch Off page sends manual tool touch-off data with `ESP423`:
 ```
 
 FluidDial reads the current machine X/Z positions from the mapped lathe DRO,
-converts them to millimeters, asks the operator to confirm, and sends the
-operator-entered X/Z reference values. X touch-off mode defaults from `ESP421`
-diameter/radius state and can be toggled before applying.
+converts them to millimeters, asks the operator to confirm the tool, machine
+X/Z, reference X/Z, and diameter/radius mode, then sends the operator-entered
+X/Z reference values. X touch-off mode defaults from `ESP421` diameter/radius
+state and can be toggled before applying.
+
+On `ESP423` success, FluidDial reports touch-off success and refreshes `ESP421`.
+On error or timeout, FluidDial shows the failure and does not imply the offset
+was applied.
 
 The existing `G38.2` probing scene remains available and is profile-aware. V3
 does not automatically convert a probe move into an `ESP423` update; the
@@ -147,6 +158,8 @@ The harness checks:
 - `ESP421` field parsing for status, modes, active tool, offsets, RPM feedback,
   encoder/index/stale/fault state, and diameter mode.
 - `ESP422` and `ESP423` ok/error command response handling.
+- Lathe command lifecycle behavior for M6 success, M6 timeout, alarm failure,
+  ESP422 success, and ESP423 timeout.
 
 Validated build targets for this implementation:
 

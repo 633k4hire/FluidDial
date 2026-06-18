@@ -38,12 +38,25 @@ struct LatheStatus {
 };
 
 struct LatheCommandResult {
-    int         command    = 0;
-    bool        known      = false;
-    bool        ok         = false;
-    bool        pending    = false;
+    int         command         = 0;
+    bool        known           = false;
+    bool        ok              = false;
+    bool        pending         = false;
+    bool        timed_out       = false;
+    bool        recoverable     = false;
+    int         target_tool     = 0;
     std::string message;
-    uint32_t    updated_ms = 0;
+    uint32_t    started_ms      = 0;
+    uint32_t    updated_ms      = 0;
+    uint32_t    last_refresh_ms = 0;
+};
+
+enum class LatheCommandSeverity {
+    None,
+    Info,
+    Success,
+    Warning,
+    Error,
 };
 
 const LatheStatus&        lathe_status();
@@ -52,6 +65,10 @@ const LatheCommandResult& lathe_last_command_result();
 bool lathe_status_known();
 bool lathe_mode_active();
 bool lathe_command_pending();
+bool lathe_command_recoverable();
+bool lathe_command_blocks_actions();
+const char* lathe_command_status_text();
+LatheCommandSeverity lathe_command_severity();
 
 void request_lathe_status(bool force = false);
 void lathe_mark_status_unavailable();
@@ -62,6 +79,8 @@ void lathe_set_status_value(const char* id, const char* value);
 void lathe_finish_status_update(bool ok);
 void lathe_handle_command_response(int command, bool ok, const char* message);
 void lathe_fail_pending_command(const char* message);
+void lathe_clear_recoverable_command();
+void lathe_poll_command();
 
 void lathe_change_tool(int tool);
 void lathe_select_tool_logical(int tool);

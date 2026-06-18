@@ -65,6 +65,27 @@ class CommandResult:
     message: str
 
 
+@dataclass
+class CommandState:
+    command: int = 0
+    known: bool = False
+    ok: bool = False
+    pending: bool = False
+    timed_out: bool = False
+    recoverable: bool = False
+    target_tool: int = 0
+    message: str = ""
+    started_ms: int = 0
+    updated_ms: int = 0
+    last_refresh_ms: int = 0
+
+
+M6_TIMEOUT_MS = 30_000
+COMMAND_TIMEOUT_MS = 8_000
+STILL_WAITING_MS = 5_000
+REFRESH_MS = 1_000
+
+
 def parse_bool(value: Any) -> bool:
     return str(value).lower() in {"true", "1", "yes", "on", "enabled", "g7", "diameter"}
 
@@ -170,6 +191,68 @@ def parse_command_response(payload: str) -> CommandResult:
         ok=document.get("status", "ok") == "ok",
         message=str(document.get("data", "")),
     )
+
+
+def command_timeout_ms(command: int) -> int:
+    return M6_TIMEOUT_MS if command == 6 else COMMAND_TIMEOUT_MS
+
+
+def begin_command(command: int, target_tool: int, message: str, now_ms: int = 0) -> CommandState:
+    return CommandState(
+        command=command,
+        known=True,
+        pending=True,
+        target_tool=target_tool,
+        message=message,
+        started_ms=now_ms,
+        updated_ms=now_ms,
+    )
+
+
+def complete_command(
+    state: CommandState,
+    ok: bool,
+    message: str,
+    now_ms: int,
+    *,
+    recoverable: bool = False,
+    timed_out: bool = False,
+) -> CommandState:
+    state.known = True
+    state.ok = ok
+    state.pending = False
+    state.recoverable = recoverable
+    state.timed_out = timed_out
+    state.message = message
+    state.updated_ms = now_ms
+    return state
+
+
+def apply_status_to_command(state: CommandState, status: LatheStatus, machine_state: str, now_ms: int) -> CommandState:
+    if state.pending and state.command == 6 and state.target_tool > 0:
+        if status.available and status.active_tool == state.target_tool:
+            return complete_command(state, True, "Tool change complete", now_ms)
+        if machine_state == "Alarm":
+            return complete_command(state, False, "Alarm during command", now_ms, recoverable=True)
+    return state
+
+
+def poll_command(state: CommandState, now_ms: int) -> CommandState:
+    if not state.pending:
+        return state
+
+    elapsed = now_ms - state.started_ms
+    if elapsed >= command_timeout_ms(state.command):
+        return complete_command(state, False, "Timed out", now_ms, recoverable=True, timed_out=True)
+
+    if elapsed >= STILL_WAITING_MS:
+        state.message = "Still waiting"
+        state.updated_ms = now_ms
+
+    if state.command == 6 and (state.last_refresh_ms == 0 or now_ms - state.last_refresh_ms >= REFRESH_MS):
+        state.last_refresh_ms = now_ms
+
+    return state
 
 
 def assert_profile_mapping() -> None:
@@ -282,11 +365,44 @@ def assert_command_results() -> None:
     assert touch_off_error.message == "probe missing"
 
 
+def assert_command_lifecycle() -> None:
+    m6 = begin_command(6, 3, "Waiting for T/M6")
+    poll_command(m6, 1_000)
+    assert m6.pending and m6.last_refresh_ms == 1_000
+    poll_command(m6, STILL_WAITING_MS)
+    assert m6.pending and m6.message == "Still waiting"
+    status = LatheStatus(known=True, available=True, enabled=True, active_tool=3)
+    apply_status_to_command(m6, status, "Idle", 6_000)
+    assert m6.known and m6.ok and not m6.pending
+    assert m6.message == "Tool change complete"
+
+    timeout = begin_command(6, 4, "Waiting for T/M6")
+    poll_command(timeout, M6_TIMEOUT_MS)
+    assert timeout.known and not timeout.ok and not timeout.pending
+    assert timeout.timed_out and timeout.recoverable
+    assert timeout.target_tool == 4 and timeout.message == "Timed out"
+
+    alarm = begin_command(6, 2, "Waiting for T/M6")
+    apply_status_to_command(alarm, LatheStatus(known=True, available=True, enabled=True, active_tool=1), "Alarm", 2_000)
+    assert alarm.known and not alarm.ok and not alarm.pending
+    assert alarm.recoverable and alarm.message == "Alarm during command"
+
+    save = begin_command(422, 1, "Saving tool")
+    response = parse_command_response(json.dumps({"cmd": "422", "status": "ok", "data": "tool saved"}))
+    complete_command(save, response.ok, response.message, 250)
+    assert save.ok and not save.pending and save.message == "tool saved"
+
+    touch = begin_command(423, 5, "Applying touch-off")
+    poll_command(touch, COMMAND_TIMEOUT_MS)
+    assert touch.timed_out and touch.recoverable and touch.message == "Timed out"
+
+
 def main() -> None:
     assert_profile_mapping()
     assert_esp421_parsing()
     assert_fallbacks()
     assert_command_results()
+    assert_command_lifecycle()
     print("lathe protocol harness: all checks passed")
 
 

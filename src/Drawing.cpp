@@ -4,6 +4,7 @@
 #include "System.h"
 #include "Drawing.h"
 #include "alarm.h"
+#include "MachineProfile.h"
 #include <map>
 #ifdef USE_WIFI
 #    include "WiFiConnection.h"
@@ -314,20 +315,23 @@ void fancyNumber(pos_t n, int n_decimals, int hl_digit, int x, int y, int text_c
 }
 
 void DRO::drawHoming(int axis, bool highlight, bool homed) {
-    text(axisNumToCStr(axis), text_left_x(), text_middle_y(), myLimitSwitches[axis] ? GREEN : YELLOW, MEDIUM, middle_left);
-    fancyNumber(myAxes[axis], num_digits(), -1, text_right_x(), text_middle_y(), highlight ? (homed ? GREEN : RED) : DARKGREY, RED);
+    int machine_axis = profile_machine_axis(axis);
+    text(profile_axis_cstr(axis), text_left_x(), text_middle_y(), myLimitSwitches[machine_axis] ? GREEN : YELLOW, MEDIUM, middle_left);
+    fancyNumber(myAxes[machine_axis], num_digits(), -1, text_right_x(), text_middle_y(), highlight ? (homed ? GREEN : RED) : DARKGREY, RED);
     advance();
 }
 
 void DRO::draw(int axis, int hl_digit, bool highlight) {
-    text(axisNumToCStr(axis), text_left_x(), text_middle_y(), highlight ? GREEN : DARKGREY, MEDIUM, middle_left);
+    int machine_axis = profile_machine_axis(axis);
+    text(profile_axis_cstr(axis), text_left_x(), text_middle_y(), highlight ? GREEN : DARKGREY, MEDIUM, middle_left);
     fancyNumber(
-        myAxes[axis], num_digits(), hl_digit, text_right_x(), text_middle_y(), highlight ? WHITE : DARKGREY, highlight ? RED : DARKGREY);
+        myAxes[machine_axis], num_digits(), hl_digit, text_right_x(), text_middle_y(), highlight ? WHITE : DARKGREY, highlight ? RED : DARKGREY);
     advance();
 }
 
 void DRO::draw(int axis, bool highlight) {
-    Stripe::draw(axisNumToChar(axis), pos_to_cstr(myAxes[axis], num_digits()), highlight, myLimitSwitches[axis] ? GREEN : WHITE);
+    int machine_axis = profile_machine_axis(axis);
+    Stripe::draw(profile_axis_char(axis), pos_to_cstr(myAxes[machine_axis], num_digits()), highlight, myLimitSwitches[machine_axis] ? GREEN : WHITE);
 }
 
 void LED::draw(bool highlighted) {

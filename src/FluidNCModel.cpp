@@ -10,6 +10,7 @@
 #include "e4math.h"
 #include "HomingScene.h"
 #include "BootLog.h"
+#include "LatheModel.h"
 
 #ifdef USE_WIFI
 #    include "WiFiConnection.h"  // wifi_use_uart_mode()
@@ -83,6 +84,7 @@ void set_disconnected_state() {
     state           = Disconnected;
     my_state_string = "N/C";
     jog_window_reset();
+    lathe_mark_status_unavailable();
 }
 
 // clang-format off
@@ -142,6 +144,14 @@ extern "C" void show_control_pins(const char* pins) {
 }
 
 #ifdef E4_POS_T
+pos_t fromMm(pos_t position) {
+    return inInches ? e4_mm_to_inch(position) : position;
+}
+
+pos_t toMm(pos_t position) {
+    return inInches ? (pos_t)(((int64_t)position * 254) / 10) : position;
+}
+
 extern "C" void show_dro(const pos_t* axes, const pos_t* wco, bool isMpos, bool* limits, size_t n_axis) {
     n_axes = (int)n_axis;
     for (int axis = 0; axis < n_axis; axis++) {
@@ -149,7 +159,7 @@ extern "C" void show_dro(const pos_t* axes, const pos_t* wco, bool isMpos, bool*
         if (isMpos) {
             axis_val -= wco[axis];
         }
-        myAxes[axis] = inInches ? e4_mm_to_inch(axis_val) : axis_val;
+        myAxes[axis] = fromMm(axis_val);
     }
 }
 #else
@@ -224,8 +234,8 @@ void send_jog_cancel() {
 }
 
 static void vsend_linef(const char* fmt, va_list va) {
-    static char buf[128];
-    vsnprintf(buf, 128, fmt, va);
+    static char buf[256];
+    vsnprintf(buf, sizeof(buf), fmt, va);
     send_line(buf);
 }
 void send_linef(const char* fmt, ...) {
@@ -268,6 +278,7 @@ static void connect_init() {
 #endif
     send_line("$G");                     // Refresh GCode modes
     send_line("$RI=200");                // Enable auto-reporting every 200 ms
+    request_lathe_status(true);          // Auto-detect FluidNC lathe support
 
     // Pre-populate the SD file list on the FIRST connect only. Re-fetching it
     // on every reconnect is both wasteful and harmful over ESP-NOW
@@ -332,6 +343,13 @@ extern "C" void show_error(int error) {
 #ifdef FNC_RX_TRACE
     dbg_printf("[rx-err] error:%d\n", error);
 #endif
+    if (lathe_consume_status_error()) {
+        if (json_in_progress()) {
+            json_reset_depth();
+        }
+        request_redisplay();
+        return;
+    }
     errorExpire = milliseconds() + 1000;
     lastError   = error;
     if (s_jog_window > 0) {

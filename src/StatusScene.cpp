@@ -3,12 +3,14 @@
 
 #include "Scene.h"
 #include "ConfirmScene.h"
+#include "LatheModel.h"
+#include "MachineProfile.h"
 
 extern Scene menuScene;
 
 class StatusScene : public Scene {
 private:
-    const char* _entry = nullptr;
+    uint32_t    _last_lathe_refresh_ms = 0;
 
     // the fro/sro/rt rotating display state
     typedef enum {
@@ -18,6 +20,122 @@ private:
     } ovrd_display_t;
 
     ovrd_display_t overd_display = FRO;
+
+    void draw_info_row(int y, const char* left, const char* right, int right_color = WHITE, int left_color = DARKGREY) {
+        text(left, 24, y, left_color, TINY, middle_left);
+        text(right, display_short_side() - 24, y, right_color, TINY, middle_right);
+    }
+
+    void draw_status_buttons() {
+        const char* grnLabel    = "";
+        const char* redLabel    = "";
+        const char* yellowLabel = "Back";
+
+        switch (state) {
+            case Alarm:
+                if (alarm_is_critical()) {
+                    redLabel = "Reset";
+                } else {
+                    redLabel = "Unlock";
+                }
+                if (alarm_is_homing()) {
+                    grnLabel = "Home All";
+                }
+                break;
+            case Homing:
+                redLabel = "Reset";
+                break;
+            case Cycle:
+                redLabel    = "E-Stop";
+                grnLabel    = "Hold";
+                yellowLabel = "Rst Ovr";
+                break;
+            case Hold:
+            case DoorClosed:
+                redLabel    = "Quit";
+                grnLabel    = "Resume";
+                yellowLabel = "Rst Ovr";
+                break;
+            case Jog:
+                redLabel = "Jog Cancel";
+                break;
+            case Idle:
+                break;
+        }
+        drawButtonLegends(redLabel, grnLabel, yellowLabel);
+    }
+
+    void draw_lathe_dashboard() {
+        const LatheStatus& lathe = lathe_status();
+
+        background();
+        drawMenuTitle("Lathe");
+        drawStatusTiny(24);
+
+        DRO dro(16, 50, 210, 27);
+        for (int axis = 0; axis < profile_axis_count(); ++axis) {
+            dro.draw(axis, -1, true);
+        }
+
+        char tool[32];
+        if (lathe.active_tool > 0) {
+            snprintf(tool, sizeof(tool), "T%d%s", lathe.active_tool, lathe.active_tool == 5 ? " Probe" : "");
+        } else {
+            snprintf(tool, sizeof(tool), "None");
+        }
+
+        char rpm[48];
+        if (lathe.feedback_rpm_known) {
+            snprintf(rpm, sizeof(rpm), "Eff %.0f  Meas %.0f", lathe.effective_rpm, lathe.feedback_rpm);
+        } else {
+            snprintf(rpm, sizeof(rpm), "Eff %.0f  Meas N/A", lathe.effective_rpm);
+        }
+
+        char modes[48];
+        snprintf(modes, sizeof(modes), "%s  %s",
+                 lathe.spindle_speed_mode.empty() ? "G97" : lathe.spindle_speed_mode.c_str(),
+                 lathe.feed_mode.empty() ? "G94" : lathe.feed_mode.c_str());
+
+        const char* encoder_text  = "ENC OK";
+        int         encoder_color = GREEN;
+        if (!lathe.encoder_enabled) {
+            encoder_text  = "ENC OFF";
+            encoder_color = YELLOW;
+        } else if (lathe.feedback_fault) {
+            encoder_text  = "ENC FAULT";
+            encoder_color = RED;
+        } else if (lathe.feedback_stale) {
+            encoder_text  = "ENC STALE";
+            encoder_color = YELLOW;
+        } else if (!lathe.encoder_capture) {
+            encoder_text  = "ENC NO CAP";
+            encoder_color = YELLOW;
+        }
+
+        bool threading_feedback_safe = lathe.encoder_enabled && lathe.encoder_capture && !lathe.feedback_stale && !lathe.feedback_fault;
+        int  safety_color            = (lathe.feedback_fault || lathe.feedback_stale) ? RED : YELLOW;
+
+        if (!threading_feedback_safe) {
+            drawOutlinedRect(18, 185, display_short_side() - 36, 24, BLACK, safety_color);
+        }
+        draw_info_row(142, "Tool", tool, lathe.active_tool == 5 ? ORANGE : WHITE);
+        draw_info_row(160, "RPM", rpm);
+        draw_info_row(178, "Modes", modes, GREEN);
+        draw_info_row(196,
+                      threading_feedback_safe ? (lathe.diameter_mode ? "G7 Diameter" : "G8 Radius") : "Thread unsafe",
+                      encoder_text,
+                      encoder_color,
+                      threading_feedback_safe ? DARKGREY : safety_color);
+
+        draw_status_buttons();
+
+#ifdef USE_WIFI
+        if (round_display) {
+            drawWiFiSignalBars(70, 20);
+        }
+#endif
+        refreshDisplay();
+    }
 
 public:
     StatusScene() : Scene("Status") {}
@@ -33,6 +151,7 @@ public:
         } else {
             dbg_printf("StatusScene: onEntry arg=%s\r\n", arg ? (const char*)arg : "null");
         }
+        request_lathe_status();
     }
 
     void onDialButtonPress() {
@@ -67,6 +186,7 @@ public:
             reDisplay();
         }
         fnc_realtime(StatusReport);  // sometimes you want an extra status
+        request_lathe_status();
     }
 
     void onRedButtonPress() {
@@ -146,7 +266,24 @@ public:
     void onDROChange() { reDisplay(); }
     void onLimitsChange() { reDisplay(); }
 
+    void onPoll() override {
+        if (!lathe_mode_active()) {
+            return;
+        }
+        lathe_poll_command();
+        uint32_t now = millis();
+        if (_last_lathe_refresh_ms == 0 || (uint32_t)(now - _last_lathe_refresh_ms) >= 1500) {
+            _last_lathe_refresh_ms = now;
+            request_lathe_status();
+        }
+    }
+
     void reDisplay() {
+        if (lathe_mode_active()) {
+            draw_lathe_dashboard();
+            return;
+        }
+
         background();
         drawMenuTitle(current_scene->name());
         drawStatus();
@@ -184,44 +321,7 @@ public:
             centered_text(mode_string(), y + 23, GREEN, TINY);
         }
 
-        const char* encoder_button_text = "Menu";
-
-        const char* grnLabel    = "";
-        const char* redLabel    = "";
-        const char* yellowLabel = "Back";
-
-        switch (state) {
-            case Alarm:
-                if (alarm_is_critical()) {
-                    redLabel = "Reset";
-                } else {
-                    redLabel = "Unlock";
-                }
-                if (alarm_is_homing()) {
-                    grnLabel = "Home All";
-                }
-                break;
-            case Homing:
-                redLabel = "Reset";
-                break;
-            case Cycle:
-                redLabel    = "E-Stop";
-                grnLabel    = "Hold";
-                yellowLabel = "Rst Ovr";
-                break;
-            case Hold:
-            case DoorClosed:
-                redLabel    = "Quit";
-                grnLabel    = "Resume";
-                yellowLabel = "Rst Ovr";
-                break;
-            case Jog:
-                redLabel = "Jog Cancel";
-                break;
-            case Idle:
-                break;
-        }
-        drawButtonLegends(redLabel, grnLabel, yellowLabel);
+        draw_status_buttons();
 
 #ifdef USE_WIFI
         if (round_display) {

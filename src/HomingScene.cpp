@@ -3,20 +3,28 @@
 
 #include "Scene.h"
 #include "ConfigItem.h"
+#include "LatheModel.h"
+#include "MachineProfile.h"
 
 extern Scene statusScene;
 
-#define HOMING_N_AXIS 3
+#define HOMING_MACHINE_AXES 6
 
-IntConfigItem homing_cycles[HOMING_N_AXIS] = {
+IntConfigItem homing_cycles[HOMING_MACHINE_AXES] = {
     { "$/axes/x/homing/cycle" },
     { "$/axes/y/homing/cycle" },
     { "$/axes/z/homing/cycle" },
+    { "$/axes/a/homing/cycle" },
+    { "$/axes/b/homing/cycle" },
+    { "$/axes/c/homing/cycle" },
 };
-BoolConfigItem homing_allows[HOMING_N_AXIS] = {
+BoolConfigItem homing_allows[HOMING_MACHINE_AXES] = {
     { "$/axes/x/homing/allow_single_axis" },
     { "$/axes/y/homing/allow_single_axis" },
     { "$/axes/z/homing/allow_single_axis" },
+    { "$/axes/a/homing/allow_single_axis" },
+    { "$/axes/b/homing/allow_single_axis" },
+    { "$/axes/c/homing/allow_single_axis" },
 };
 
 int  homed_axes = 0;
@@ -30,23 +38,34 @@ void set_axis_homed(int axis) {
 
 void detect_homing_info() {
     clear_config_requests();
-    for (int i = 0; i < HOMING_N_AXIS; i++) {
-        homing_cycles[i].init();
-        homing_allows[i].init();
+    for (int display_axis = 0; display_axis < profile_axis_count(); display_axis++) {
+        int machine_axis = profile_machine_axis(display_axis);
+        if (machine_axis >= 0 && machine_axis < HOMING_MACHINE_AXES) {
+            homing_cycles[machine_axis].init();
+            homing_allows[machine_axis].init();
+        }
     }
     homed_axes = 0;
 }
 bool can_home(int i) {
-    if (!homing_cycles[i].known() || !homing_allows[i].known()) {
+    int machine_axis = profile_machine_axis(i);
+    if (machine_axis < 0 || machine_axis >= HOMING_MACHINE_AXES) {
+        return false;
+    }
+    if (!homing_cycles[machine_axis].known() || !homing_allows[machine_axis].known()) {
         return false;
     }
     // Cannot home if cycle == 0 and !allow_single_axis
-    return homing_cycles[i].get() != 0 || homing_allows[i].get();
+    return homing_cycles[machine_axis].get() != 0 || homing_allows[machine_axis].get();
 }
 
 bool have_homing_info() {
-    for (int i = 0; i < HOMING_N_AXIS; ++i) {
-        if (!homing_cycles[i].known() || !homing_allows[i].known()) {
+    for (int display_axis = 0; display_axis < profile_axis_count(); ++display_axis) {
+        int machine_axis = profile_machine_axis(display_axis);
+        if (machine_axis < 0 || machine_axis >= HOMING_MACHINE_AXES) {
+            return false;
+        }
+        if (!homing_cycles[machine_axis].known() || !homing_allows[machine_axis].known()) {
             return false;
         }
     }
@@ -58,8 +77,6 @@ private:
     int _axis_to_home = -1;
     int _auto         = false;
 
-    bool _allows[HOMING_N_AXIS];
-
 public:
     HomingScene() : Scene("Home", 4) {}
 
@@ -70,6 +87,9 @@ public:
         }
         const char* s = static_cast<const char*>(arg);
         _auto         = s && strcmp(s, "auto") == 0;
+        if (lathe_mode_active()) {
+            request_lathe_status();
+        }
         if (!have_homing_info()) {
             schedule_action(detect_homing_info);
         }
@@ -86,7 +106,7 @@ public:
     void onGreenButtonPress() override {
         if (state == Idle || state == Alarm) {
             if (_axis_to_home != -1) {
-                send_linef("$H%c", axisNumToChar(_axis_to_home));
+                send_linef("$H%c", profile_axis_char(_axis_to_home));
             } else {
                 send_line("$H");
             }
@@ -105,7 +125,7 @@ public:
     void increment_axis_to_home() {
         do {
             ++_axis_to_home;
-            if (_axis_to_home >= HOMING_N_AXIS) {
+            if (_axis_to_home >= profile_axis_count()) {
                 _axis_to_home = -1;
                 return;
             }
@@ -137,13 +157,13 @@ public:
 
         if (false && state == Homing) {
             DRO dro(16, 68, 210, 32);
-            for (size_t axis = 0; axis < HOMING_N_AXIS; axis++) {
+            for (int axis = 0; axis < profile_axis_count(); axis++) {
                 dro.draw(axis, -1, true);
             }
 
         } else if (state == Idle || state == Homing || state == Alarm) {
             DRO dro(16, 68, 210, 32);
-            for (int axis = 0; axis < HOMING_N_AXIS; ++axis) {
+            for (int axis = 0; axis < profile_axis_count(); ++axis) {
                 dro.drawHoming(axis, is_homing(axis), is_homed(axis));
             }
 
@@ -174,18 +194,18 @@ public:
                 if (!have_homing_info()) {
                     orangeLabel = "Loading";
                 } else if (_axis_to_home == -1) {
-                    for (int axis = 0; axis < HOMING_N_AXIS; ++axis) {
+                    for (int axis = 0; axis < profile_axis_count(); ++axis) {
                         if (can_home(axis)) {
                             if (!grnLabel.length()) {
                                 grnLabel = "Home";
                             }
 
-                            grnLabel += axisNumToChar(axis);
+                            grnLabel += profile_axis_char(axis);
                         }
                     }
                 } else {
                     grnLabel = "Home";
-                    grnLabel += axisNumToChar(_axis_to_home);
+                    grnLabel += profile_axis_char(_axis_to_home);
                 }
             }
         } else {

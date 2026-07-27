@@ -84,6 +84,9 @@ void AboutScene::reDisplay() {
     centered_text(version_str.c_str(), y, LIGHTGREY, TINY);
     refreshDisplay();
     y += 10;
+#ifdef MAIJKER_XZACT_LATHE
+    centered_text("Maijker XZACt UART HMI", y += y_spacing, GREEN, TINY);
+#endif
 #ifdef FNC_BAUD  // FNC_BAUD might not be defined for Windows
     text("FNC baud:", key_x, y += y_spacing, LIGHTGREY, TINY, bottom_right);
     text(intToCStr(FNC_BAUD), val_x, y, GREEN, TINY, bottom_left);

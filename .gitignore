@@ -1,5 +1,6 @@
 prefs
 .pio
+.pio-core
 .vscode
 src/version.*
 *~

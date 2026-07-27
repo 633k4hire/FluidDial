@@ -165,8 +165,14 @@ Validated build targets for this implementation:
 
 ```sh
 pio run -e m5dial
+pio run -e maijker_m5dial
 pio run -e cyddial
 ```
+
+`maijker_m5dial` is the dedicated wired M5Dial image for the Maijker XZACt
+mini-lathe. It starts with the X/Z/C operator mapping, uses M5Dial Port A at
+1,000,000 baud, locks the runtime transport to UART without starting the Wi-Fi
+stack, and does not enable the USB-to-FluidNC debug command bridge.
 
 The native Windows target was attempted but could not compile in the local
 environment because `g++` was not available on PATH.

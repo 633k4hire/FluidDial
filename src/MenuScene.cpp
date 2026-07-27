@@ -71,7 +71,7 @@ IB filesButton("Files", &fileSelectScene, "filestp.png");
 #endif
 
 IB controlButton("Macros", &macroMenu, "macrostp.png");
-#ifdef USE_WIFI
+#if defined(USE_WIFI) && !defined(MAIJKER_XZACT_LATHE)
 // WiFi scene replaces About button; will reintroduce display orientation later
 extern WiFiSetupScene wifiSetupScene;
 IB setupButton("Settings", &wifiSetupScene, "abouttp.png");

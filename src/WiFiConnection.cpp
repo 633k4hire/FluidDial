@@ -604,6 +604,12 @@ bool ws_rx_available() {
 static int _transport_cached = -1;  // -1 = not yet loaded from NVS
 
 TransportMode wifi_get_transport() {
+#ifdef MAIJKER_XZACT_LATHE
+    // The Maijker pendant is a dedicated physical UART HMI. Ignore stale NVS
+    // transport selections left by other firmware images.
+    _transport_cached = (int)TransportMode::UART;
+    return TransportMode::UART;
+#endif
     if (_transport_cached >= 0) return (TransportMode)_transport_cached;
 
     Preferences prefs;
@@ -627,6 +633,11 @@ TransportMode wifi_get_transport() {
 }
 
 void wifi_set_transport(TransportMode mode) {
+#ifdef MAIJKER_XZACT_LATHE
+    (void)mode;
+    _transport_cached = (int)TransportMode::UART;
+    return;
+#endif
     Preferences prefs;
     prefs.begin(PREF_NAMESPACE, false);
     prefs.putUChar("transport",  (uint8_t)mode);
@@ -650,6 +661,9 @@ void wifi_set_uart_mode(bool uart) {
 }
 
 bool wifi_is_first_boot() {
+#ifdef MAIJKER_XZACT_LATHE
+    return false;
+#endif
     Preferences prefs;
     prefs.begin(PREF_NAMESPACE, false);
     bool done = prefs.getBool("setup_done", false);

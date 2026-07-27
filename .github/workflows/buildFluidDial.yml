@@ -21,8 +21,15 @@ jobs:
       - name: Install PlatformIO Core
         run: pip install --upgrade platformio
 
+      - name: Validate lathe and Maijker contracts
+        run: python tools/lathe_protocol_harness.py
+
       - name: Build PlatformIO Project
-        run: pio run && pio run -t buildfs && pio run -t build_merged
+        run: |
+          pio run
+          pio run -t buildfs
+          pio run -t build_merged
+          pio run -e maijker_m5dial -t build_merged
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:

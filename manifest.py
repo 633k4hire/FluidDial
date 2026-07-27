@@ -58,7 +58,7 @@ def addImage(imageName, offset, srcFilePath, dstFileName):
         sys.exit(1)
     manifest['images'][imageName] = image
 
-for envName in ['m5dial', 'cyddial']:
+for envName in ['m5dial', 'maijker_m5dial', 'cyddial']:
     buildDir = os.path.join('.pio', 'build', envName)
     addImage(envName, '0x0000', os.path.join(buildDir, 'merged-flash.bin'), envName + ".bin")
 
@@ -112,6 +112,9 @@ def makeManifest():
 
     addDialType("FluidDial for M5Dial", "FluidDial for M5Dial", "FluidDial type")
     addInstallable(fresh_install, False, ["m5dial"])
+
+    addDialType("Maijker XZACt Lathe HMI", "Wired FluidDial HMI for Maijker XZACt", "FluidDial type")
+    addInstallable(fresh_install, False, ["maijker_m5dial"])
 
 makeManifest()
 

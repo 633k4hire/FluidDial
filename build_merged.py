@@ -5,14 +5,14 @@ Import("env")
 
 flash_size = env.BoardConfig().get("upload.flash_size", "detect")
 
-cmd = '$PYTHONEXE $UPLOADER --chip $BOARD_MCU merge_bin --output $BUILD_DIR/merged-flash.bin --flash_mode dio --flash_size ' + flash_size + " "
+cmd = '"$PYTHONEXE" "$UPLOADER" --chip $BOARD_MCU merge_bin --output "$BUILD_DIR/merged-flash.bin" --flash_mode dio --flash_size ' + flash_size + " "
 
 for image in env.get("FLASH_EXTRA_IMAGES", []):
-    cmd += image[0] + " " + env.subst(image[1]) + " "
+    cmd += image[0] + ' "' + env.subst(image[1]) + '" '
 
 filesystem_start = env.GetProjectOption("custom_filesystem_start", "Missing_custom_filesystem_start_variable")
 
-cmd += " 0x10000 $BUILD_DIR/firmware.bin " + filesystem_start + " $BUILD_DIR/littlefs.bin"
+cmd += ' 0x10000 "$BUILD_DIR/firmware.bin" ' + filesystem_start + ' "$BUILD_DIR/littlefs.bin"'
 
 env.AddCustomTarget(
     name="build_merged",

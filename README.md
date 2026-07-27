@@ -122,6 +122,7 @@ Requires [PlatformIO](https://platformio.org/). Install the PlatformIO IDE exten
 | Environment | Hardware |
 |---|---|
 | `m5dial` | M5Stack M5Dial |
+| `maijker_m5dial` | Dedicated Maijker XZACt M5Dial HMI over 1 Mbaud wired UART |
 | `cyddial` | CYD (2432S028) — auto-detects resistive or capacitive touch |
 
 For example, to build and flash the CYD Dial:
@@ -129,3 +130,9 @@ For example, to build and flash the CYD Dial:
 ```sh
 pio run -e cyddial --target upload
 ```
+
+The `maijker_m5dial` image is the dedicated HMI build for the MKS-DLC32 V2.1
+lathe controller. Its runtime transport is locked to UART and USB remains
+programming-only. Wire DLC32
+GPIO18 TX to M5Dial GPIO15 RX and DLC32 GPIO23 RX to M5Dial GPIO13 TX, with a
+common ground. The controller and pendant both use 1,000,000 baud, 8N1.

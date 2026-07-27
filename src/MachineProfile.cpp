@@ -3,7 +3,11 @@
 
 #include "MachineProfile.h"
 
+#ifdef MAIJKER_XZACT_LATHE
+static MachineProfileKind s_profile = MachineProfileKind::Lathe;
+#else
 static MachineProfileKind s_profile = MachineProfileKind::Default;
+#endif
 
 static const int   default_axes[]       = { 0, 1, 2 };
 static const char  default_axis_chars[] = { 'X', 'Y', 'Z' };
@@ -22,7 +26,14 @@ bool machine_profile_is_lathe() {
 }
 
 void set_machine_profile_lathe(bool enabled) {
+#ifdef MAIJKER_XZACT_LATHE
+    // This firmware image is physically assigned to the X/Z/C lathe. Keep
+    // operator axis labels correct even while ESP421 is temporarily absent.
+    (void)enabled;
+    s_profile = MachineProfileKind::Lathe;
+#else
     s_profile = enabled ? MachineProfileKind::Lathe : MachineProfileKind::Default;
+#endif
 }
 
 int profile_axis_count() {

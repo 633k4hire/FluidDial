@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -397,12 +398,37 @@ def assert_command_lifecycle() -> None:
     assert touch.timed_out and touch.recoverable and touch.message == "Timed out"
 
 
+def assert_maijker_build_contract() -> None:
+    root = Path(__file__).resolve().parents[1]
+    platformio = (root / "platformio.ini").read_text(encoding="utf-8")
+    hardware = (root / "src" / "HardwareM5Dial.hpp").read_text(encoding="utf-8")
+    system = (root / "src" / "SystemArduino.cpp").read_text(encoding="utf-8")
+
+    section = platformio.split("[env:maijker_m5dial]", 1)[1].split("[env:", 1)[0]
+    assert "-DMAIJKER_XZACT_LATHE" in section
+    assert "-DFNC_BAUD=1000000" in section
+    assert "-DUSE_WIFI" in section
+    assert "-DDEBUG_TO_USB" not in section
+
+    assert "PND_RX_FNC_TX_PIN = GPIO_NUM_15" in hardware
+    assert "PND_TX_FNC_RX_PIN = GPIO_NUM_13" in hardware
+    assert "RED_BUTTON_PIN    = GPIO_NUM_1" in hardware
+    assert "GREEN_BUTTON_PIN  = GPIO_NUM_2" in hardware
+    assert "fnc_putchar(c);  // So you can type commands to FluidNC" in system
+    assert "#ifdef DEBUG_TO_USB" in system
+
+    wifi = (root / "src" / "WiFiConnection.cpp").read_text(encoding="utf-8")
+    assert "#ifdef MAIJKER_XZACT_LATHE" in wifi
+    assert "return TransportMode::UART;" in wifi
+
+
 def main() -> None:
     assert_profile_mapping()
     assert_esp421_parsing()
     assert_fallbacks()
     assert_command_results()
     assert_command_lifecycle()
+    assert_maijker_build_contract()
     print("lathe protocol harness: all checks passed")
 
 

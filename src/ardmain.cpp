@@ -4,6 +4,7 @@
 #include "System.h"
 #include "FileParser.h"
 #include "FluidNCModel.h"  // pendant_wait_for_fluidnc_ready()
+#include "LatheModel.h"
 #include "Scene.h"
 #include "AboutScene.h"
 #if defined(USE_M5) || defined(USE_LOVYANGFX)

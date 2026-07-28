@@ -508,7 +508,8 @@ namespace {
         }
         uint32_t offset = strtoul(server->arg("offset").c_str(), nullptr, 10);
         if (offset != ota.writtenBytes || ota.writtenBytes + body.length() > ota.expectedBytes) return sendError(409, "chunk offset or size is invalid");
-        if (Update.write(reinterpret_cast<const uint8_t*>(body.c_str()), body.length()) != body.length()) {
+        auto* chunk = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(body.c_str()));
+        if (Update.write(chunk, body.length()) != body.length()) {
             abortOta("OTA partition write failed");
             return sendError(500, "OTA partition write failed");
         }
@@ -588,7 +589,7 @@ namespace {
                      ",\"paired\":" + (paired ? "true" : "false") + ",\"healthy\":" +
                      (serviceReady && identityReady && applicationHealthy && !bootPendingVerify ? "true" : "false") +
                      ",\"last_deployment_id\":\"" +
-                     jsonEscape(lastDeploymentId) + "\",\"last_result\":\"" + jsonEscape(lastResult) +
+                     jsonEscape(lastDeploymentId.c_str()) + "\",\"last_result\":\"" + jsonEscape(lastResult.c_str()) +
                      "\",\"fluidnc_link_state\":\"" + fluidNcLinkState() + "\"}");
     }
 

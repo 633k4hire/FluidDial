@@ -7,4 +7,5 @@ src/version.*
 junk
 release
 .DS_Store
+__pycache__/
 platformio.local.ini

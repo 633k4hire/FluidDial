@@ -1,5 +1,7 @@
 #include "Menu.h"
 #include "PieMenu.h"
+#include "LatheModel.h"
+#include "MachineProfile.h"
 #ifdef USE_WMB_FSS
 #    include "FileMenu.h"
 #endif
@@ -82,13 +84,15 @@ IB setupButton("About", &aboutScene, "abouttp.png");
 class MenuScene : public PieMenu {
 public:
     MenuScene() : PieMenu("Main", buttonRadius, menu_help_text) {}
-    void disableIcons() {
-        statusButton.disable();
+    void disableMachineActions() {
+        // Link loss disables machine commands, not navigation. Operators must
+        // still be able to inspect status, files, and settings/recovery.
+        statusButton.enable();
         homingButton.disable();
         jogButton.disable();
         probeButton.disable();
         toolchangeButton.disable();
-        filesButton.disable();
+        filesButton.enable();
         controlButton.disable();
         setupButton.enable();
     }
@@ -102,13 +106,21 @@ public:
         controlButton.enable();
         setupButton.enable();
     }
-    void onEntry(void* arg) {
-        PieMenu::onEntry(arg);
-        if (state == Disconnected) {
-            disableIcons();
+    void syncIconAvailability() {
+        if (state == Disconnected ||
+            (machine_profile_is_lathe() && !operator_machine_actions_available())) {
+            disableMachineActions();
         } else {
             enableIcons();
         }
+    }
+    void reDisplay() override {
+        syncIconAvailability();
+        PieMenu::reDisplay();
+    }
+    void onEntry(void* arg) {
+        PieMenu::onEntry(arg);
+        syncIconAvailability();
     }
     void onTouchClick() override {
         if (touchIsCenter() && state == Alarm) {
@@ -118,7 +130,7 @@ public:
         PieMenu::onTouchClick();
     }
     void onStateChange(state_t old_state) override {
-        if (state != Disconnected) {
+        if (state != Disconnected && (!machine_profile_is_lathe() || operator_machine_actions_available())) {
             enableIcons();
             if (old_state == Disconnected) {
 #ifdef AUTO_JOG_SCENE
@@ -134,6 +146,8 @@ public:
                 }
 #endif
             }
+        } else {
+            disableMachineActions();
         }
         reDisplay();
     }

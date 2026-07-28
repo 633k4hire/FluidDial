@@ -421,6 +421,14 @@ def assert_maijker_build_contract() -> None:
     assert "#ifdef MAIJKER_XZACT_LATHE" in wifi
     assert "return TransportMode::UART;" in wifi
 
+    menu = (root / "src" / "MenuScene.cpp").read_text(encoding="utf-8")
+    lathe = (root / "src" / "LatheModel.cpp").read_text(encoding="utf-8")
+    assert "void reDisplay() override" in menu
+    assert "syncIconAvailability();" in menu
+    assert "operator_machine_actions_available()" in menu
+    assert "s_status.available && s_status.enabled" in lathe
+    assert "json_reset_depth();" in lathe
+
 
 def main() -> None:
     assert_profile_mapping()

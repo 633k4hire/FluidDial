@@ -4,6 +4,7 @@
 #include "LatheModel.h"
 
 #include "FluidNCModel.h"
+#include "FileParser.h"
 #include "HomingScene.h"
 #include "MachineProfile.h"
 #include "Scene.h"
@@ -20,6 +21,7 @@ static LatheCommandResult s_last_command;
 static uint32_t           s_last_status_request_ms = 0;
 static bool               s_status_reply_expected  = false;
 static int                s_pending_tool_change    = 0;
+static OperatorLinkState  s_operator_link_state   = OperatorLinkState::Disconnected;
 
 static const uint32_t LATHE_M6_TIMEOUT_MS              = 30000;
 static const uint32_t LATHE_COMMAND_TIMEOUT_MS         = 8000;
@@ -68,6 +70,9 @@ static void refresh_homing_for_profile_change() {
 static void apply_status(const LatheStatus& next_status) {
     bool old_lathe_mode = machine_profile_is_lathe();
     s_status            = next_status;
+    if (s_status.available && s_status.enabled && !s_last_command.pending && !s_last_command.recoverable) {
+        s_operator_link_state = OperatorLinkState::Ready;
+    }
 
     set_machine_profile_lathe(status_enables_lathe(s_status));
     if (old_lathe_mode != machine_profile_is_lathe()) {
@@ -123,6 +128,7 @@ static void begin_command(int command, const std::string& message, int target_to
     s_last_command.started_ms      = now;
     s_last_command.updated_ms      = now;
     s_last_command.last_refresh_ms = 0;
+    s_operator_link_state          = OperatorLinkState::CommandPending;
     request_redisplay();
 }
 
@@ -140,6 +146,10 @@ static void complete_command(int command, bool ok, const char* message, bool rec
     s_last_command.recoverable = recoverable;
     s_last_command.message     = message ? message : "";
     s_last_command.updated_ms  = millis();
+    s_operator_link_state = recoverable ? OperatorLinkState::Recoverable
+                                        : (s_status.available && s_status.enabled
+                                               ? OperatorLinkState::Ready
+                                               : OperatorLinkState::Synchronizing);
     if (command != 6) {
         s_pending_tool_change = 0;
     }
@@ -202,6 +212,59 @@ LatheCommandSeverity lathe_command_severity() {
         return LatheCommandSeverity::Error;
     }
     return s_last_command.ok ? LatheCommandSeverity::Success : LatheCommandSeverity::Error;
+}
+
+OperatorLinkState operator_link_state() {
+    return s_operator_link_state;
+}
+
+bool operator_navigation_available() {
+    return s_operator_link_state != OperatorLinkState::Updating;
+}
+
+bool operator_machine_actions_available() {
+    return s_operator_link_state == OperatorLinkState::Ready && s_status.available &&
+           s_status.enabled && !lathe_command_blocks_actions();
+}
+
+void operator_note_transport_lost() {
+    json_reset_depth();
+    s_status_reply_expected = false;
+    if (s_last_command.pending) {
+        complete_command(s_last_command.command,
+                         false,
+                         "Connection lost; inspect machine before clearing",
+                         true,
+                         false,
+                         s_last_command.target_tool);
+    }
+    LatheStatus unavailable;
+    unavailable.known      = true;
+    unavailable.available  = false;
+    unavailable.enabled    = false;
+    unavailable.updated_ms = millis();
+    apply_status(unavailable);
+    if (!s_last_command.recoverable) s_operator_link_state = OperatorLinkState::Disconnected;
+}
+
+void operator_note_transport_recovered() {
+    json_reset_depth();
+    s_status_reply_expected = false;
+    s_last_status_request_ms = 0;
+    if (!s_last_command.recoverable) s_operator_link_state = OperatorLinkState::Synchronizing;
+    request_lathe_status(true);
+}
+
+void operator_note_ota_active(bool active) {
+    if (active) {
+        s_operator_link_state = OperatorLinkState::Updating;
+    } else if (s_operator_link_state == OperatorLinkState::Updating) {
+        if (s_last_command.pending) s_operator_link_state = OperatorLinkState::CommandPending;
+        else if (s_last_command.recoverable) s_operator_link_state = OperatorLinkState::Recoverable;
+        else s_operator_link_state = s_status.available && s_status.enabled
+                                         ? OperatorLinkState::Ready
+                                         : OperatorLinkState::Synchronizing;
+    }
 }
 
 void request_lathe_status(bool force) {
@@ -339,6 +402,9 @@ void lathe_clear_recoverable_command() {
     }
     s_last_command = LatheCommandResult();
     s_pending_tool_change = 0;
+    s_operator_link_state = s_status.available && s_status.enabled
+                                ? OperatorLinkState::Ready
+                                : OperatorLinkState::Synchronizing;
     request_redisplay();
 }
 
@@ -372,7 +438,7 @@ void lathe_change_tool(int tool) {
     if (tool < 1 || tool > 5) {
         return;
     }
-    if (lathe_command_blocks_actions()) {
+    if (!operator_machine_actions_available()) {
         return;
     }
     s_pending_tool_change = tool;
@@ -386,7 +452,7 @@ void lathe_select_tool_logical(int tool) {
     if (tool < 1 || tool > 5) {
         return;
     }
-    if (lathe_command_blocks_actions()) {
+    if (!operator_machine_actions_available()) {
         return;
     }
     send_linef("M61Q%d", tool);
@@ -398,7 +464,7 @@ void lathe_save_tool(int tool, e4_t gx, e4_t gz, e4_t wx, e4_t wz, e4_t nose_rad
     if (tool < 1 || tool > 5) {
         return;
     }
-    if (lathe_command_blocks_actions()) {
+    if (!operator_machine_actions_available()) {
         return;
     }
 
@@ -417,7 +483,7 @@ void lathe_touch_off_tool(int tool, e4_t machine_x, e4_t machine_z, e4_t referen
     if (tool < 1 || tool > 5) {
         return;
     }
-    if (lathe_command_blocks_actions()) {
+    if (!operator_machine_actions_available()) {
         return;
     }
 

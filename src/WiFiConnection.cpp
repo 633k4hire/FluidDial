@@ -16,6 +16,7 @@
 #include "FileParser.h"  // json_reset_depth()
 #include "System.h"
 #include "Scene.h"   // request_redisplay()
+#include "SecureOtaService.h"
 
 #include <Esp.h>
 #include <esp_attr.h>     // RTC_NOINIT_ATTR - survives soft reboot, cleared on power loss
@@ -81,6 +82,7 @@ static bool _ws_connected       = false;
 static bool _ws_started         = false;
 static bool _wifi_was_connected = false;
 static bool _wifi_stack_started = false;  // true only after wifi_init() actually ran
+static bool _secure_ota_only    = false;  // UART remains machine transport; WiFi is authenticated OTA only
 static WiFiConfig _active_cfg = {};
 static wl_status_t      _last_wifi_status        = WL_IDLE_STATUS;
 static const char*      _wifi_error_msg           = nullptr;  // human-readable failure, cleared on success
@@ -1341,7 +1343,7 @@ static void handleOtaRoot() {
 }
 
 static void handleOtaUploadDone() {
-    if (Update.hasError()) {
+    if (!secure_ota_legacy_upload_allowed() || _ota_progress < 0 || Update.hasError()) {
         httpServer.send(500, "text/plain", "Update failed");
         _ota_progress = -1;
         request_redisplay();
@@ -1359,6 +1361,11 @@ static size_t _ota_content_length = 0;
 static void handleOtaUploadData() {
     HTTPUpload& upload = httpServer.upload();
     if (upload.status == UPLOAD_FILE_START) {
+        if (!secure_ota_legacy_upload_allowed()) {
+            dbg_println("OTA: unsigned legacy upload rejected after secure pairing");
+            _ota_progress = -1;
+            return;
+        }
         String cl = httpServer.header("Content-Length");
         _ota_content_length = cl.length() ? (size_t)cl.toInt() : 0;
         dbg_printf("OTA: upload start — %s (content-length=%u)\n",
@@ -1604,7 +1611,13 @@ static void ensure_wifi_event_registered() {
 
 void wifi_init(bool auto_ap) {
     TransportMode transport = wifi_get_transport();
-    if (transport == TransportMode::UART) {
+#ifdef MAIJKER_XZACT_LATHE
+    _secure_ota_only = transport == TransportMode::UART;
+    if (_secure_ota_only) {
+        dbg_println("Transport: UART machine link with secure WiFi OTA service");
+    }
+#endif
+    if (transport == TransportMode::UART && !_secure_ota_only) {
         dbg_println("Transport: UART mode — WiFi stack not started");
         return;
     }
@@ -1617,10 +1630,17 @@ void wifi_init(bool auto_ap) {
         return;
     }
 
+    if (_secure_ota_only) {
+        // Register and self-test the authenticated service before association.
+        // A temporary AP outage must not make an otherwise healthy pending
+        // application fail its bootloader validation window.
+        secure_ota_register(httpServer, false);
+    }
+
     WiFiConfig cfg = wifi_load_config();
 
     if (!cfg.valid) {
-        if (auto_ap) {
+        if (auto_ap && !_secure_ota_only) {
             // No credentials saved yet — auto-start AP so the user can configure
             // via browser immediately (captive portal at 192.168.4.1).
             dbg_println("No WiFi credentials — starting AP setup mode automatically");
@@ -1699,11 +1719,12 @@ void wifi_poll() {
             }
         }
         httpServer.handleClient();
+        secure_ota_poll();
         return;
     }
 
     if (!_wifi_stack_started) return;  // wifi_init() never ran (first boot or UART/ESP-NOW mode)
-    if (wifi_use_uart_mode())   return;
+    if (wifi_use_uart_mode() && !_secure_ota_only) return;
     if (wifi_use_espnow_mode()) return;
 
     if (_ap_mode) {
@@ -1825,7 +1846,17 @@ void wifi_poll() {
         if (!MDNS.begin("fluiddial")) {
             dbg_println("mDNS init failed — .local hostnames may not resolve");
         }
-        if (_active_cfg.fluidnc_ip[0] == '\0') {
+        if (_secure_ota_only) {
+            secure_ota_register(httpServer, false);
+            MDNS.addService("tams-fluiddial", "tcp", 80);
+            MDNS.addServiceTxt("tams-fluiddial", "tcp", "product", "fluiddial");
+            MDNS.addServiceTxt("tams-fluiddial", "tcp", "role", "m5dial_hmi");
+            MDNS.addServiceTxt("tams-fluiddial", "tcp", "protocol", "1");
+            MDNS.addServiceTxt("tams-fluiddial", "tcp", "version", git_info);
+            MDNS.addServiceTxt("tams-fluiddial", "tcp", "device", secure_ota_device_id_short());
+            httpServer.begin();
+            dbg_printf("Secure OTA: normal-runtime service ready at %s\n", WiFi.localIP().toString().c_str());
+        } else if (_active_cfg.fluidnc_ip[0] == '\0') {
             dbg_println("No FluidNC address configured — WiFi up, Telnet idle");
         } else if (is_dotted_decimal(_active_cfg.fluidnc_ip)) {
             // Plain IP address — open Telnet socket immediately.
@@ -1848,6 +1879,14 @@ void wifi_poll() {
         dbg_println("WiFi lost");
     }
     _wifi_was_connected = now_connected;
+
+    if (_secure_ota_only) {
+        secure_ota_poll();
+        if (now_connected) {
+            httpServer.handleClient();
+        }
+        return;
+    }
 
     // Handle async DNS completion (hostname -> IP resolution).
     // Only act if WiFi is still up and the Telnet socket hasn't already started.
@@ -1972,7 +2011,6 @@ static void start_ota_ap_credentials() {
     httpServer.on("/hotspot-detect.html", HTTP_GET,  handleRoot);
     httpServer.on("/scan",                HTTP_GET,  handleScan);
     httpServer.on("/wifi-save",           HTTP_POST, handleOtaWifiSave);
-    httpServer.on("/update",              HTTP_POST, handleOtaUploadDone, handleOtaUploadData);
     httpServer.onNotFound(handleNotFound);
     httpServer.begin();
 
@@ -2025,6 +2063,7 @@ void wifi_start_ota_server() {
     httpServer.on("/update",   HTTP_GET,  handleOtaRoot);
     httpServer.on("/update",   HTTP_POST, handleOtaUploadDone, handleOtaUploadData);
     httpServer.on("/releases", HTTP_GET,  handleGetReleases);
+    secure_ota_register(httpServer, true);
     httpServer.onNotFound([]() { httpServer.send(404, "text/plain", "Not found"); });
     httpServer.begin();
 
@@ -2059,6 +2098,7 @@ void wifi_stop_ota_server() {
     _ota_server_active = false;
     _ota_ap_mode       = false;
     _ota_progress      = 0;
+    secure_ota_stop();
     dbg_println("OTA: server stopped");
 }
 

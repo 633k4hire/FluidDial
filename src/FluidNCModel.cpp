@@ -84,7 +84,7 @@ void set_disconnected_state() {
     state           = Disconnected;
     my_state_string = "N/C";
     jog_window_reset();
-    lathe_mark_status_unavailable();
+    operator_note_transport_lost();
 }
 
 // clang-format off
@@ -294,10 +294,12 @@ extern "C" void show_state(const char* state_string) {
     previous_state = state;
     state_t new_state;
     if (decode_state_string(state_string, new_state) && state != new_state) {
-        if (state == Disconnected) {
+        bool was_disconnected = state == Disconnected;
+        state = new_state;
+        if (was_disconnected) {
+            operator_note_transport_recovered();
             schedule_action(connect_init);
         }
-        state = new_state;
         if (state == Alarm && lastAlarm == 0) {  // Unknown
             send_line("$A");                     // Get last alarm
             awaiting_alarm = true;

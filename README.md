@@ -6,6 +6,32 @@ Wiki pages for more information: [M5 FluidDial Pendant (left image)](http://wiki
 
 Both have similar functionality and similar cost, using different hardware.
 
+## Maijker secure Wi-Fi OTA
+
+The `maijker_m5dial` build keeps an authenticated OTA service available while
+the machine link remains on UART. FluidNC discovers the narrow
+`_tams-fluiddial._tcp` mDNS service, but trusts only a physically confirmed
+P-256 pairing and the persisted device identity-key fingerprint.
+
+Updates use signed `.tamsfw` packages and sequential authenticated chunks.
+FluidDial independently verifies the product, board, hardware role, chip,
+partition scheme, protocol range, release counter, signature, image length,
+and SHA-256 before booting the inactive slot. A normal key cannot replay or
+downgrade a release. Recovery downgrades require the separate recovery trust
+root and physical confirmation.
+
+The current M5Dial 8 MB A/B partition layout supports an application-only
+bootstrap through the attended OTA scene. That one bootstrap installs this
+normal-runtime service. A USB recovery image is needed only if the live device
+inspection later proves that its partition table differs; no flash operation
+is part of this source change.
+
+After an update, the new image remains pending until NVS identity, OTA service,
+display/event loop, and redisplay initialization have passed. Failure or a
+watchdog reboot before validation leaves ESP-IDF rollback available. The
+previous application records a rollback result when it observes an unfinished
+deployment record.
+
 ## Overview
 
 FluidDial supports two connection modes — **WiFi** and **Wired (UART)** — and is fully compatible with both the **M5Dial** and **CYD** pendant hardware.

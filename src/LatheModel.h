@@ -59,6 +59,15 @@ enum class LatheCommandSeverity {
     Error,
 };
 
+enum class OperatorLinkState : uint8_t {
+    Disconnected,
+    Synchronizing,
+    Ready,
+    CommandPending,
+    Recoverable,
+    Updating,
+};
+
 const LatheStatus&        lathe_status();
 const LatheCommandResult& lathe_last_command_result();
 
@@ -69,6 +78,12 @@ bool lathe_command_recoverable();
 bool lathe_command_blocks_actions();
 const char* lathe_command_status_text();
 LatheCommandSeverity lathe_command_severity();
+OperatorLinkState operator_link_state();
+bool operator_navigation_available();
+bool operator_machine_actions_available();
+void operator_note_transport_lost();
+void operator_note_transport_recovered();
+void operator_note_ota_active(bool active);
 
 void request_lathe_status(bool force = false);
 void lathe_mark_status_unavailable();

@@ -8,6 +8,9 @@
 
 #include "OTAScene.h"
 #include "WiFiConnection.h"
+#ifdef ARDUINO
+#    include "SecureOtaService.h"
+#endif
 #include "Drawing.h"
 #include "System.h"
 
@@ -17,6 +20,9 @@ void OTAScene::onEntry(void* arg) {
 }
 
 void OTAScene::onRedButtonPress() {
+#ifdef ARDUINO
+    secure_ota_cancel_pairing();
+#endif
     wifi_stop_ota_server();
  
 #ifdef ARDUINO
@@ -27,6 +33,18 @@ void OTAScene::onRedButtonPress() {
 }
 
 void OTAScene::onGreenButtonPress() {
+#ifdef ARDUINO
+    if (secure_ota_recovery_pending()) {
+        secure_ota_confirm_recovery_physical();
+        reDisplay();
+        return;
+    }
+    if (secure_ota_pairing_pending()) {
+        secure_ota_confirm_pairing_physical();
+        reDisplay();
+        return;
+    }
+#endif
     if (!wifi_ota_ap_mode() && wifi_ota_error()) {
         wifi_ota_force_ap_setup();
         reDisplay();
@@ -37,14 +55,33 @@ void OTAScene::reDisplay() {
     background();
 
     if (round_display) {
-        centered_text("OTA Update", 24);
+        centered_text("Secure OTA", 24);
         drawRect(70, 34, 100, 1, 0, DARKGREY);
     } else {
-        centered_text("OTA Update", 12);
+        centered_text("Secure OTA", 12);
         drawRect(55, 22, 130, 1, 0, DARKGREY);
     }
 
     int pct = wifi_ota_progress();
+#ifdef ARDUINO
+    if (secure_ota_recovery_pending()) {
+        centered_text("Recovery downgrade", 66, YELLOW, TINY);
+        centered_text("Signed recovery key", 96, CYAN, SMALL);
+        centered_text("Confirm only if intended", 124, DARKGREY, TINY);
+        drawButtonLegends("Cancel", "Authorize", "");
+        refreshDisplay();
+        return;
+    }
+    if (secure_ota_pairing_pending()) {
+        centered_text("Compare pairing code", 66, LIGHTGREY, TINY);
+        centered_text(secure_ota_pairing_code(), 96, CYAN, SMALL);
+        centered_text("Match FluidNC.local", 124, DARKGREY, TINY);
+        centered_text("then confirm", 144, DARKGREY, TINY);
+        drawButtonLegends("Cancel", "Confirm", "");
+        refreshDisplay();
+        return;
+    }
+#endif
     if (pct == -1) {
         centered_text("Upload Failed",  100, RED,      SMALL);
         centered_text("Check browser",  124, DARKGREY, TINY);

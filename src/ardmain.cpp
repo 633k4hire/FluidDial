@@ -12,6 +12,9 @@
 
 #ifdef USE_WIFI
 #    include "WiFiConnection.h"
+#    ifdef ARDUINO
+#        include "SecureOtaService.h"
+#    endif
 #    include "WiFiSetupScene.h"
 #    include "PeerLink.h"
 #    include "ESPNowPairingScene.h"
@@ -154,6 +157,16 @@ void loop() {
         } else {
             wifi_poll();
         }
+#ifdef ARDUINO
+        if (secure_ota_update_active()) {
+            // OTA owns the pendant while the inactive slot is being written.
+            // Do not dispatch controls or forward machine commands.
+            operator_note_ota_active(true);
+            service_redisplay();
+            return;
+        }
+        operator_note_ota_active(false);
+#endif
     }
 #endif
     // fnc_poll() drains ONE byte per call. The WiFi transport can refill its
@@ -172,4 +185,11 @@ void loop() {
     }
     dispatch_events();  // Handle dial, touch, buttons
     service_redisplay();
+#if defined(USE_WIFI) && defined(ARDUINO)
+    // Reaching the end of the normal application loop proves that display,
+    // configuration, event dispatch, and redisplay initialization completed.
+    // Secure OTA still independently requires NVS identity and HTTP service
+    // health before accepting a pending image.
+    secure_ota_note_application_healthy();
+#endif
 }

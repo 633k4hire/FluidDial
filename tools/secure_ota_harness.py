@@ -163,6 +163,11 @@ class SecureOtaSourceContractTests(unittest.TestCase):
         self.assertIn('"role", "m5dial_hmi"', self.wifi)
         self.assertIn("secure_ota_register(httpServer, false)", self.wifi)
 
+    def test_uart_bootstrap_starts_setup_ap_without_credentials(self) -> None:
+        self.assertIn("if (!cfg.valid) {", self.wifi)
+        self.assertIn("if (auto_ap) {", self.wifi)
+        self.assertNotIn("if (auto_ap && !_secure_ota_only) {", self.wifi)
+
     def test_pairing_and_pending_boot_need_physical_and_application_health(self) -> None:
         self.assertIn("physicalWindowOpen()", self.service)
         self.assertIn("secure_ota_confirm_pairing_physical", self.service)

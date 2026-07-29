@@ -1640,7 +1640,7 @@ void wifi_init(bool auto_ap) {
     WiFiConfig cfg = wifi_load_config();
 
     if (!cfg.valid) {
-        if (auto_ap && !_secure_ota_only) {
+        if (auto_ap) {
             // No credentials saved yet — auto-start AP so the user can configure
             // via browser immediately (captive portal at 192.168.4.1).
             dbg_println("No WiFi credentials — starting AP setup mode automatically");

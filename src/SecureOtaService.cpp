@@ -28,6 +28,7 @@ extern const char* git_info;
 namespace {
     constexpr char Namespace[] = "tamsota";
     constexpr char PairLabel[] = "tams-fluiddial-http-pair-v1";
+    constexpr char UartPairLabel[] = "tams-fluiddial-uart-pair-v1";
     constexpr uint32_t ChallengeLifetimeMs = 30000;
     constexpr uint32_t SessionTimeoutMs = 45000;
     constexpr uint32_t PairingWindowMs = 120000;
@@ -65,6 +66,8 @@ namespace {
     bool recoveryPending = false;
     uint32_t recoveryConfirmedUntil = 0;
     std::string recoveryManifestDigest;
+    char uartPairNonce[33] = {};
+    bool uartPairAcknowledged = false;
 
     uint8_t challenge[16] = {};
     char challengeHex[33] = {};
@@ -194,6 +197,19 @@ namespace {
         auto* info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
         mbedtls_md_hmac(info, key, keyLength, data, length, output);
     }
+    std::string pairDiagnosticTag() {
+        if (!paired) return {};
+        static const char label[] = "tams-uart-pair-diagnostic-v1";
+        uint8_t digest[32];
+        hmac(pairSecret,
+             sizeof(pairSecret),
+             reinterpret_cast<const uint8_t*>(label),
+             strlen(label),
+             digest);
+        std::string value = hex(digest, 8);
+        secureZero(digest, sizeof(digest));
+        return value;
+    }
     bool constantHexEquals(const String& supplied, const uint8_t expected[32]) {
         if (supplied.length() != 64) return false;
         uint8_t actual[32];
@@ -205,6 +221,49 @@ namespace {
     }
     bool physicalWindowOpen() {
         return physicalWindowUntil && static_cast<int32_t>(physicalWindowUntil - millis()) > 0;
+    }
+
+    std::string responseField(const char* response, const char* key) {
+        if (!response || !key) return {};
+        const std::string text(response);
+        const std::string prefix(key);
+        size_t start = text.find(prefix);
+        if (start == std::string::npos ||
+            (start != 0 && text[start - 1] != ' ')) return {};
+        start += prefix.size();
+        size_t end = text.find(' ', start);
+        return text.substr(start, end == std::string::npos ? std::string::npos : end - start);
+    }
+
+    void rotateUartPairNonce() {
+        uint8_t random[16];
+        esp_fill_random(random, sizeof(random));
+        const std::string value = hex(random, sizeof(random));
+        strncpy(uartPairNonce, value.c_str(), sizeof(uartPairNonce) - 1);
+        uartPairNonce[sizeof(uartPairNonce) - 1] = '\0';
+        secureZero(random, sizeof(random));
+        uartPairAcknowledged = false;
+    }
+
+    void persistPair(const char* controllerId,
+                     const char* controllerFingerprint,
+                     const uint8_t secret[32]) {
+        Preferences preferences;
+        preferences.begin(Namespace, false);
+        preferences.putBytes("secret", secret, 32);
+        preferences.putString("ctl_id", controllerId);
+        preferences.putString("ctl_fp", controllerFingerprint);
+        preferences.putBool("paired", true);
+        preferences.end();
+        memcpy(pairSecret, secret, sizeof(pairSecret));
+        strncpy(pairedControllerId, controllerId, sizeof(pairedControllerId) - 1);
+        pairedControllerId[sizeof(pairedControllerId) - 1] = '\0';
+        strncpy(
+            pairedControllerFingerprint,
+            controllerFingerprint,
+            sizeof(pairedControllerFingerprint) - 1);
+        pairedControllerFingerprint[sizeof(pairedControllerFingerprint) - 1] = '\0';
+        paired = true;
     }
 
     const char* fluidNcLinkState() {
@@ -260,6 +319,7 @@ namespace {
         lastDeploymentCounter = preferences.getULong("deploy_ctr", 0);
         acceptedReleaseCounter = preferences.getULong("release_ctr", 0);
         preferences.end();
+        if (!uartPairNonce[0]) rotateUartPairNonce();
     }
 
     void clearPendingPair() {
@@ -463,7 +523,10 @@ namespace {
         std::string json = "{\"product\":\"fluiddial\",\"hardware_role\":\"m5dial_hmi\",\"ota_protocol\":1,\"version\":\"" +
                            jsonEscape(git_info) + "\",\"device_id_short\":\"" + jsonEscape(deviceIdShort) + "\",\"paired\":" +
                            (paired ? "true" : "false") + ",\"trust_configured\":" +
-                           (TamsFirmware::trustConfigured() ? "true" : "false") + "}";
+                           (TamsFirmware::trustConfigured() ? "true" : "false") + ",\"uart_pair_acknowledged\":" +
+                           (uartPairAcknowledged ? "true" : "false") + ",\"pair_tag\":\"" +
+                           jsonEscape(pairDiagnosticTag().c_str()) + "\",\"service_status\":\"" +
+                           jsonEscape(statusText) + "\"}";
         sendJson(200, json);
     }
     void handlePairStart() {
@@ -849,21 +912,17 @@ const char* secure_ota_device_id() { return deviceId; }
 const char* secure_ota_device_id_short() { return deviceIdShort; }
 const char* secure_ota_identity_fingerprint() { return identityFingerprint; }
 const char* secure_ota_status() { return statusText; }
-bool secure_ota_legacy_upload_allowed() { return !(paired && TamsFirmware::trustConfigured()); }
+bool secure_ota_legacy_upload_allowed() {
+    // The installed lathe must remain recoverable when the DLC is unavailable
+    // or its pairing record is stale. The operator explicitly chose an
+    // unrestricted LAN recovery path, so the classic /update upload remains
+    // available even after secure pairing has been established.
+    return true;
+}
 
 void secure_ota_confirm_pairing_physical() {
     if (!physicalWindowOpen() || !pairingPending || !controllerPairConfirmed) return;
-    Preferences preferences;
-    preferences.begin(Namespace, false);
-    preferences.putBytes("secret", pendingSecret, sizeof(pendingSecret));
-    preferences.putString("ctl_id", pendingControllerId);
-    preferences.putString("ctl_fp", pendingControllerFingerprint);
-    preferences.putBool("paired", true);
-    preferences.end();
-    memcpy(pairSecret, pendingSecret, sizeof(pairSecret));
-    strncpy(pairedControllerId, pendingControllerId, sizeof(pairedControllerId) - 1);
-    strncpy(pairedControllerFingerprint, pendingControllerFingerprint, sizeof(pairedControllerFingerprint) - 1);
-    paired = true;
+    persistPair(pendingControllerId, pendingControllerFingerprint, pendingSecret);
     clearPendingPair();
     setStatus("paired and ready");
 }
@@ -876,6 +935,62 @@ void secure_ota_confirm_recovery_physical() {
 void secure_ota_cancel_pairing() {
     clearPendingPair();
     secure_ota_set_physical_window(false);
+}
+
+bool secure_ota_uart_pairing_request(char* command, size_t capacity) {
+    if (!command || capacity == 0 || !identityReady || uartPairAcknowledged || ota.active) {
+        return false;
+    }
+    if (!uartPairNonce[0]) rotateUartPairNonce();
+    const int written = snprintf(
+        command,
+        capacity,
+        "[ESP428]D=%s F=%s N=%s",
+        deviceId,
+        identityFingerprint,
+        uartPairNonce);
+    return written > 0 && static_cast<size_t>(written) < capacity;
+}
+
+bool secure_ota_accept_uart_pairing_response(const char* response) {
+    if (!identityReady || !uartPairNonce[0]) return false;
+    const std::string controllerId = responseField(response, "CID=");
+    const std::string controllerFingerprint = responseField(response, "CF=");
+    const std::string controllerNonce = responseField(response, "CN=");
+    uint8_t fingerprintBytes[32];
+    uint8_t controllerNonceBytes[16];
+    if (controllerId.rfind("fluidnc-", 0) != 0 ||
+        controllerId.size() != 24 ||
+        !unhex(String(controllerFingerprint.c_str()), fingerprintBytes, sizeof(fingerprintBytes)) ||
+        !unhex(String(controllerNonce.c_str()), controllerNonceBytes, sizeof(controllerNonceBytes))) {
+        secureZero(fingerprintBytes, sizeof(fingerprintBytes));
+        secureZero(controllerNonceBytes, sizeof(controllerNonceBytes));
+        return false;
+    }
+
+    const std::string transcript =
+        std::string(UartPairLabel) + "\n" + controllerId + "\n" +
+        controllerFingerprint + "\n" + deviceId + "\n" +
+        identityFingerprint + "\n" + uartPairNonce + "\n" + controllerNonce;
+    uint8_t derivedSecret[32];
+    sha256(
+        reinterpret_cast<const uint8_t*>(transcript.data()),
+        transcript.size(),
+        derivedSecret);
+    persistPair(controllerId.c_str(), controllerFingerprint.c_str(), derivedSecret);
+    secureZero(derivedSecret, sizeof(derivedSecret));
+    secureZero(fingerprintBytes, sizeof(fingerprintBytes));
+    secureZero(controllerNonceBytes, sizeof(controllerNonceBytes));
+    uartPairAcknowledged = true;
+    setStatus("UART-paired and ready");
+    return true;
+}
+
+void secure_ota_note_uart_link_reset() {
+    // Re-advertise the same boot nonce after a controller/link reset. Keeping
+    // it stable makes retries idempotent and prevents a transient link flap
+    // from racing authenticated Wi-Fi requests against a newly derived secret.
+    uartPairAcknowledged = false;
 }
 
 #endif

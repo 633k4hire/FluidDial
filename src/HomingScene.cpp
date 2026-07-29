@@ -36,9 +36,19 @@ void set_axis_homed(int axis) {
     request_redisplay();
 }
 
+static bool homing_query_supported(int display_axis) {
+    // This lathe's C coordinate represents the shared spindle/chuck. It has
+    // no conventional FluidNC homing block until an angular encoder is
+    // commissioned, so querying $/axes/c/homing/* only returns error:3.
+    return !(machine_profile_is_lathe() && profile_axis_char(display_axis) == 'C');
+}
+
 void detect_homing_info() {
     clear_config_requests();
     for (int display_axis = 0; display_axis < profile_axis_count(); display_axis++) {
+        if (!homing_query_supported(display_axis)) {
+            continue;
+        }
         int machine_axis = profile_machine_axis(display_axis);
         if (machine_axis >= 0 && machine_axis < HOMING_MACHINE_AXES) {
             homing_cycles[machine_axis].init();
@@ -48,6 +58,9 @@ void detect_homing_info() {
     homed_axes = 0;
 }
 bool can_home(int i) {
+    if (!homing_query_supported(i)) {
+        return false;
+    }
     int machine_axis = profile_machine_axis(i);
     if (machine_axis < 0 || machine_axis >= HOMING_MACHINE_AXES) {
         return false;
@@ -61,6 +74,9 @@ bool can_home(int i) {
 
 bool have_homing_info() {
     for (int display_axis = 0; display_axis < profile_axis_count(); ++display_axis) {
+        if (!homing_query_supported(display_axis)) {
+            continue;
+        }
         int machine_axis = profile_machine_axis(display_axis);
         if (machine_axis < 0 || machine_axis >= HOMING_MACHINE_AXES) {
             return false;

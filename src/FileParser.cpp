@@ -8,6 +8,9 @@
 #include "GrblParserC.h"  // send_line()
 #include "HomingScene.h"  // set_axis_homed()
 #include "LatheModel.h"
+#if defined(USE_WIFI) && defined(ARDUINO)
+#    include "SecureOtaService.h"
+#endif
 #include "MachineProfile.h"
 
 #include <JsonStreamingParser.h>
@@ -648,6 +651,11 @@ public:
         if (_cmd == "422" || _cmd == "423") {
             lathe_handle_command_response(atoi(_cmd.c_str()), _status == "ok", _data.c_str());
         }
+#if defined(USE_WIFI) && defined(ARDUINO)
+        if (_cmd == "428" && _status == "ok") {
+            secure_ota_accept_uart_pairing_response(_data.c_str());
+        }
+#endif
         if (_status != "ok" && _file_listener) {
             _status = "ok";
             try_next_macro_file(_file_listener);
@@ -889,6 +897,9 @@ extern "C" void handle_msg(char* command, char* arguments) {
     }
     if (strcmp(command, "RST") == 0) {
         dbg_println("FluidNC Reset");
+#if defined(USE_WIFI) && defined(ARDUINO)
+        secure_ota_note_uart_link_reset();
+#endif
         state = Disconnected;
         act_on_state_change();
     }

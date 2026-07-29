@@ -179,6 +179,26 @@ void loop() {
 #endif
     }
 #endif
+#if defined(USE_WIFI) && defined(ARDUINO)
+    if (wifi_use_uart_mode()) {
+        static bool last_uart_connected = false;
+        static uint32_t next_uart_pairing_at = 0;
+        const bool uart_connected = fnc_is_connected();
+        if (uart_connected && !last_uart_connected) {
+            secure_ota_note_uart_link_reset();
+            next_uart_pairing_at = 0;
+        }
+        last_uart_connected = uart_connected;
+        if (uart_connected &&
+            static_cast<int32_t>(millis() - next_uart_pairing_at) >= 0) {
+            char command[192];
+            if (secure_ota_uart_pairing_request(command, sizeof(command))) {
+                send_line(command, 750);
+            }
+            next_uart_pairing_at = millis() + 3000U;
+        }
+    }
+#endif
     // fnc_poll() drains ONE byte per call. The WiFi transport can refill its
     // ring buffer with hundreds of bytes per loop iteration (a kernel TCP
     // window worth — preferences.json bursts in ~5 KB). Drain a chunk per

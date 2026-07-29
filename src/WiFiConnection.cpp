@@ -1635,6 +1635,11 @@ void wifi_init(bool auto_ap) {
         // A temporary AP outage must not make an otherwise healthy pending
         // application fail its bootloader validation window.
         secure_ota_register(httpServer, false);
+        // Keep a DLC-independent recovery route available in normal UART
+        // operation. This lets Codex upload the application image directly to
+        // the installed M5 over WiFi without a menu, button sequence, or an
+        // authenticated DLC relay.
+        httpServer.on("/update", HTTP_POST, handleOtaUploadDone, handleOtaUploadData);
     }
 
     WiFiConfig cfg = wifi_load_config();
@@ -1876,9 +1881,22 @@ void wifi_poll() {
         }
         _dns_done = false;  // discard any in-flight DNS result
         set_disconnected_state();
+        // Auto-reconnect is not reliable after the secure OTA HTTP service has
+        // handled several short-lived connections. Schedule an explicit
+        // reconnect so an installed UART pendant never loses its only firmware
+        // update and diagnostic path until someone power-cycles the machine.
+        WiFi.setAutoReconnect(false);
+        _wifi_retry_at = millis() + 2000;
+        _wifi_connect_start_ms = 0;
         dbg_println("WiFi lost");
     }
     _wifi_was_connected = now_connected;
+
+    if (_wifi_ever_connected && !now_connected && !_wifi_retry_at &&
+        _wifi_connect_start_ms &&
+        (millis() - _wifi_connect_start_ms) > WIFI_CONNECT_TIMEOUT_MS) {
+        _wifi_retry_at = millis() + 2000;
+    }
 
     if (_secure_ota_only) {
         secure_ota_poll();

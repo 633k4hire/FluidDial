@@ -3,6 +3,7 @@
 #if defined(ARDUINO) && defined(USE_WIFI)
 
 #include <cstdint>
+#include <cstddef>
 
 class WebServer;
 
@@ -33,5 +34,12 @@ const char* secure_ota_status();
 // uploads are disabled. They remain available only for the one-time attended
 // bootstrap/recovery path.
 bool secure_ota_legacy_upload_allowed();
+
+// The dedicated Maijker UART link is a physical trust anchor. On each new
+// controller link, exchange fresh nonces over that wire and derive the same
+// Wi-Fi OTA pairing secret on both devices without requiring a menu or button.
+bool secure_ota_uart_pairing_request(char* command, size_t capacity);
+bool secure_ota_accept_uart_pairing_response(const char* response);
+void secure_ota_note_uart_link_reset();
 
 #endif

@@ -116,8 +116,6 @@ public:
             if (!operator_basic_motion_actions_available()) {
                 homingButton.disable();
                 jogButton.disable();
-            }
-            if (!operator_machine_actions_available()) {
                 probeButton.disable();
                 toolchangeButton.disable();
                 controlButton.disable();

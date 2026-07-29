@@ -359,7 +359,10 @@ namespace {
         sendJson(200, json);
     }
     void handlePairStart() {
-        if (!physicalWindowOpen()) return sendError(403, "physical pairing window is closed");
+        // Pairing is requested from FluidNC.local during normal operation.
+        // Opening the bounded window here only permits the comparison flow;
+        // the exact device still requires a physical center-button press.
+        secure_ota_set_physical_window(true);
         String controllerId = server->arg("controller_id");
         String controllerFingerprint = server->arg("controller_fingerprint");
         String peerHex = server->arg("controller_pub");
@@ -400,7 +403,7 @@ namespace {
             return sendError(409, "pairing comparison is not pending or does not match");
         }
         controllerPairConfirmed = true;
-        setStatus("press green on M5Dial to pair");
+        setStatus("press center on M5Dial to pair");
         sendJson(202, "{\"status\":\"waiting_for_physical_confirmation\"}");
     }
     void handlePairStatus() {
@@ -760,6 +763,9 @@ void secure_ota_confirm_recovery_physical() {
     recoveryConfirmedUntil = millis() + PairingWindowMs;
     setStatus("recovery downgrade confirmed; retry from FluidNC.local");
 }
-void secure_ota_cancel_pairing() { clearPendingPair(); }
+void secure_ota_cancel_pairing() {
+    clearPendingPair();
+    secure_ota_set_physical_window(false);
+}
 
 #endif

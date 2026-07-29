@@ -142,6 +142,9 @@ class SecureOtaSourceContractTests(unittest.TestCase):
         )
         cls.wifi = (root / "src" / "WiFiConnection.cpp").read_text(encoding="utf-8")
         cls.main = (root / "src" / "ardmain.cpp").read_text(encoding="utf-8")
+        cls.pairing_scene = (root / "src" / "SecurePairingScene.cpp").read_text(
+            encoding="utf-8"
+        )
 
     def test_all_secure_endpoints_are_registered(self) -> None:
         for endpoint in (
@@ -177,6 +180,14 @@ class SecureOtaSourceContractTests(unittest.TestCase):
         self.assertIn("esp_ota_mark_app_valid_cancel_rollback", self.service)
         self.assertIn("esp_ota_mark_app_invalid_rollback_and_reboot", self.service)
         self.assertIn("secure_ota_note_application_healthy", self.main)
+
+    def test_normal_runtime_pairing_uses_the_center_dial(self) -> None:
+        self.assertIn("secure_ota_set_physical_window(true)", self.service)
+        self.assertIn("secure_ota_pairing_pending()", self.main)
+        self.assertIn("push_scene(&securePairingScene)", self.main)
+        self.assertIn("onDialButtonPress", self.pairing_scene)
+        self.assertIn("secure_ota_confirm_pairing_physical()", self.pairing_scene)
+        self.assertIn("Press center dial to pair", self.pairing_scene)
 
     def test_legacy_upload_is_disabled_after_secure_pairing(self) -> None:
         self.assertIn("secure_ota_legacy_upload_allowed", self.wifi)

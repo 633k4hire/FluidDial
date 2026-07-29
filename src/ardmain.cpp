@@ -20,6 +20,9 @@
 #    include "PeerLink.h"
 #    include "ESPNowPairingScene.h"
 #    include "OTAScene.h"
+#    ifdef ARDUINO
+#        include "SecurePairingScene.h"
+#    endif
 extern Scene firstBootScene;
 static bool _wifi_initialized  = false;
 static bool _first_boot_active = false;
@@ -159,6 +162,12 @@ void loop() {
             wifi_poll();
         }
 #ifdef ARDUINO
+        if (secure_ota_pairing_pending() && current_scene != &securePairingScene) {
+            // A request from the paired FluidNC workflow is enough to display
+            // the comparison code. The operator authorizes it with the M5Dial
+            // center button; no menu navigation is required.
+            push_scene(&securePairingScene);
+        }
         if (secure_ota_update_active()) {
             // OTA owns the pendant while the inactive slot is being written.
             // Do not dispatch controls or forward machine commands.

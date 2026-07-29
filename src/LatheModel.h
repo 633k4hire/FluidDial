@@ -59,6 +59,18 @@ enum class LatheCommandSeverity {
     Error,
 };
 
+struct LatheSyncDiagnostics {
+    uint32_t requests              = 0;
+    uint32_t successful_replies    = 0;
+    uint32_t failed_replies        = 0;
+    uint32_t timed_out_replies     = 0;
+    uint32_t recovery_retries      = 0;
+    uint32_t last_request_ms       = 0;
+    uint32_t last_reply_ms         = 0;
+    uint32_t next_retry_ms         = 0;
+    bool     reply_expected        = false;
+};
+
 enum class OperatorLinkState : uint8_t {
     Disconnected,
     Synchronizing,
@@ -81,13 +93,20 @@ LatheCommandSeverity lathe_command_severity();
 OperatorLinkState operator_link_state();
 bool operator_navigation_available();
 bool operator_machine_actions_available();
+// Home and Jog remain navigable on the fixed Maijker lathe while the optional
+// ESP421 detail document is resynchronizing. Their scenes still enforce the
+// live FluidNC state, alarms, and native command validation.
+bool operator_basic_motion_actions_available();
 void operator_note_transport_lost();
 void operator_note_transport_recovered();
 void operator_note_ota_active(bool active);
 
 void request_lathe_status(bool force = false);
+void lathe_schedule_status_refresh(bool immediate = true);
+void lathe_poll_status();
 void lathe_mark_status_unavailable();
 bool lathe_consume_status_error();
+const LatheSyncDiagnostics& lathe_sync_diagnostics();
 
 void lathe_begin_status_update();
 void lathe_set_status_value(const char* id, const char* value);

@@ -14,6 +14,16 @@ constexpr static const int UPDATE_RATE_MS = 30;
 #    include <LittleFS.h>
 extern Stream&             debugPort;
 void init_fnc_uart(int uart_num, int tx_pin, int rx_pin);
+
+struct FluidNcTransportDiagnostics {
+    uint32_t rx_bytes          = 0;
+    uint32_t tx_bytes          = 0;
+    uint32_t rx_high_water     = 0;
+    uint32_t reinitializations = 0;
+    uint32_t last_rx_ms        = 0;
+    uint32_t last_tx_ms        = 0;
+};
+FluidNcTransportDiagnostics fluidnc_transport_diagnostics();
 #endif  // ARDUINO
 
 #ifdef USE_LOVYANGFX

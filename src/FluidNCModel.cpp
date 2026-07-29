@@ -12,6 +12,8 @@
 #include "BootLog.h"
 #include "LatheModel.h"
 
+#include <algorithm>
+
 #ifdef USE_WIFI
 #    include "WiFiConnection.h"  // wifi_use_uart_mode()
 #endif
@@ -35,6 +37,7 @@ uint32_t           mySpeed            = 0;
 uint32_t           mySelectedTool     = 0;
 
 std::string myModes = "no data";
+static FluidNcLinkDiagnostics s_link_diagnostics;
 
 int      lastAlarm = 0;
 int      lastError = 0;
@@ -296,6 +299,11 @@ extern "C" void show_state(const char* state_string) {
     if (decode_state_string(state_string, new_state) && state != new_state) {
         bool was_disconnected = state == Disconnected;
         state = new_state;
+        if (previous_state == Homing && state == Idle) {
+            // ESP421 can be interleaved with the final homing status burst.
+            // Defer a clean detail refresh to the normal application loop.
+            lathe_schedule_status_refresh(true);
+        }
         if (was_disconnected) {
             operator_note_transport_recovered();
             schedule_action(connect_init);
@@ -342,6 +350,7 @@ extern "C" void handle_other(char* line) {
 }
 
 extern "C" void show_error(int error) {
+    ++s_link_diagnostics.protocol_errors;
 #ifdef FNC_RX_TRACE
     dbg_printf("[rx-err] error:%d\n", error);
 #endif
@@ -369,6 +378,7 @@ extern "C" void show_error(int error) {
 }
 
 extern "C" void show_timeout() {
+    ++s_link_diagnostics.command_timeouts;
     dbg_println("Timeout");
 }
 extern "C" void show_ok() {
@@ -515,17 +525,21 @@ bool pendant_wait_for_fluidnc_ready(uint32_t budget_ms) {
 //   tick 3: re-initialize the UART driver from scratch, then re-probe.
 //           UART re-init is a no-op when running in WiFi mode.
 static void recover_link(int tick) {
+    ++s_link_diagnostics.recovery_probes;
+    s_link_diagnostics.last_recovery_ms = milliseconds();
     bootlog_printf("recover: tick=%d", tick);
     flush_fnc_rx(20);
     request_status_report();
     if (tick == 3) {
 #ifdef USE_WIFI
         if (wifi_use_uart_mode()) {
+            ++s_link_diagnostics.uart_reinitializations;
             bootlog_printf("recover: re-init uart");
             reinit_fnc_uart();
             request_status_report();
         }
 #else
+        ++s_link_diagnostics.uart_reinitializations;
         bootlog_printf("recover: re-init uart");
         reinit_fnc_uart();
         request_status_report();
@@ -552,6 +566,10 @@ bool fnc_is_connected() {
     }
     if ((now - disconnect_ms) >= 0) {
         s_consecutive_timeouts++;
+        ++s_link_diagnostics.timeout_events;
+        s_link_diagnostics.last_timeout_ms      = now;
+        s_link_diagnostics.consecutive_timeouts =
+            static_cast<uint8_t>(std::min(s_consecutive_timeouts, 255));
         bootlog_printf("disconnected: timeout #%d", s_consecutive_timeouts);
         recover_link(s_consecutive_timeouts);
         next_ping_ms  = now + ping_interval_ms;
@@ -567,7 +585,13 @@ bool fnc_is_connected() {
 
 void update_rx_time() {
     int now       = milliseconds();
+    s_link_diagnostics.received_bytes_last_ms = now;
     next_ping_ms  = now + ping_interval_ms;
     disconnect_ms = now + disconnect_interval_ms;
     s_consecutive_timeouts = 0;
+    s_link_diagnostics.consecutive_timeouts = 0;
+}
+
+const FluidNcLinkDiagnostics& fluidnc_link_diagnostics() {
+    return s_link_diagnostics;
 }

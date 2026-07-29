@@ -1,7 +1,9 @@
 #if defined(ARDUINO) && defined(USE_WIFI)
 
 #include "SecureOtaService.h"
+#include "DeviceDiagnostics.h"
 #include "LatheModel.h"
+#include "System.h"
 #include "TamsFirmwarePackage.h"
 #include "TamsFirmwareTrust.h"
 
@@ -17,6 +19,7 @@
 #include <mbedtls/sha256.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <string>
 
@@ -326,6 +329,8 @@ namespace {
         secureZero(digest, sizeof(digest));
         return valid;
     }
+    void sendError(int code, const char* error);
+
     void sendJson(int code, const std::string& json) {
         server->sendHeader("Cache-Control", "no-store");
         if (authenticatedResponseReady) {
@@ -346,6 +351,109 @@ namespace {
             authenticatedResponseReady = false;
         }
         server->send(code, "application/json", json.c_str());
+    }
+
+    void putLe16(uint8_t* destination, uint16_t value) {
+        destination[0] = static_cast<uint8_t>(value);
+        destination[1] = static_cast<uint8_t>(value >> 8);
+    }
+
+    void putLe32(uint8_t* destination, uint32_t value) {
+        destination[0] = static_cast<uint8_t>(value);
+        destination[1] = static_cast<uint8_t>(value >> 8);
+        destination[2] = static_cast<uint8_t>(value >> 16);
+        destination[3] = static_cast<uint8_t>(value >> 24);
+    }
+
+    constexpr size_t ScreenWidth       = 240;
+    constexpr size_t ScreenHeight      = 240;
+    constexpr size_t ScreenPixelBytes  = ScreenWidth * ScreenHeight;
+    constexpr size_t BmpPaletteBytes   = 256 * 4;
+    constexpr size_t BmpHeaderBytes    = 14 + 40 + BmpPaletteBytes;
+    constexpr size_t BmpResponseBytes  = BmpHeaderBytes + ScreenPixelBytes;
+
+    void buildScreenBmpHeader(std::array<uint8_t, BmpHeaderBytes>& header) {
+        header.fill(0);
+        header[0] = 'B';
+        header[1] = 'M';
+        putLe32(header.data() + 2, BmpResponseBytes);
+        putLe32(header.data() + 10, BmpHeaderBytes);
+        putLe32(header.data() + 14, 40);
+        putLe32(header.data() + 18, ScreenWidth);
+        // Negative height makes the RGB332 framebuffer a top-down BMP.
+        putLe32(header.data() + 22, static_cast<uint32_t>(-static_cast<int32_t>(ScreenHeight)));
+        putLe16(header.data() + 26, 1);
+        putLe16(header.data() + 28, 8);
+        putLe32(header.data() + 34, ScreenPixelBytes);
+        putLe32(header.data() + 46, 256);
+        for (size_t index = 0; index < 256; ++index) {
+            uint8_t* entry = header.data() + 54 + index * 4;
+            entry[0] = static_cast<uint8_t>((index & 0x03) * 255 / 3);
+            entry[1] = static_cast<uint8_t>(((index >> 2) & 0x07) * 255 / 7);
+            entry[2] = static_cast<uint8_t>(((index >> 5) & 0x07) * 255 / 7);
+            entry[3] = 0;
+        }
+    }
+
+    void attachAuthenticatedBinaryResponse(int code, const uint8_t bodyDigest[32]) {
+        if (!authenticatedResponseReady) return;
+        std::string canonical = "response\n" + std::string(authenticatedResponseNonce) + "\n" +
+                                std::to_string(authenticatedResponseCounter) + "\n" +
+                                std::to_string(code) + "\n" + hex(bodyDigest, 32);
+        uint8_t proof[32];
+        hmac(pairSecret,
+             sizeof(pairSecret),
+             reinterpret_cast<const uint8_t*>(canonical.data()),
+             canonical.size(),
+             proof);
+        server->sendHeader("X-TAMS-Response-Auth", hex(proof, sizeof(proof)).c_str());
+        secureZero(proof, sizeof(proof));
+        authenticatedResponseReady = false;
+    }
+
+    void handleDiagnostics() {
+        constexpr const char* Path = "/api/v1/diagnostics/link";
+        if (!paired) return sendError(403, "device is not paired");
+        if (!authenticate("GET", Path, false, false)) {
+            return sendError(401, "diagnostics authorization failed");
+        }
+        sendJson(200, device_diagnostics_json());
+    }
+
+    void handleScreenCapture() {
+        constexpr const char* Path = "/api/v1/diagnostics/screen.bmp";
+        if (!paired) return sendError(403, "device is not paired");
+        if (!authenticate("GET", Path, false, false)) {
+            return sendError(401, "screen capture authorization failed");
+        }
+        const uint8_t* pixels = static_cast<const uint8_t*>(canvas.getBuffer());
+        if (!pixels || canvas.width() != ScreenWidth || canvas.height() != ScreenHeight) {
+            return sendError(503, "240x240 RGB332 canvas is unavailable");
+        }
+
+        std::array<uint8_t, BmpHeaderBytes> header;
+        buildScreenBmpHeader(header);
+        uint8_t bodyDigest[32];
+        mbedtls_sha256_context context;
+        mbedtls_sha256_init(&context);
+        mbedtls_sha256_starts_ret(&context, 0);
+        mbedtls_sha256_update_ret(&context, header.data(), header.size());
+        mbedtls_sha256_update_ret(&context, pixels, ScreenPixelBytes);
+        mbedtls_sha256_finish_ret(&context, bodyDigest);
+        mbedtls_sha256_free(&context);
+
+        server->sendHeader("Cache-Control", "no-store");
+        server->sendHeader("Content-Disposition", "attachment; filename=\"m5dial-current.bmp\"");
+        attachAuthenticatedBinaryResponse(200, bodyDigest);
+        secureZero(bodyDigest, sizeof(bodyDigest));
+        server->setContentLength(BmpResponseBytes);
+        server->send(200, "image/bmp", "");
+        server->sendContent(reinterpret_cast<const char*>(header.data()), header.size());
+        for (size_t offset = 0; offset < ScreenPixelBytes; offset += 2048) {
+            size_t length = std::min<size_t>(2048, ScreenPixelBytes - offset);
+            server->sendContent(reinterpret_cast<const char*>(pixels + offset), length);
+            delay(0);
+        }
     }
     void sendError(int code, const char* error) {
         sendJson(code, "{\"error\":\"" + jsonEscape(error) + "\"}");
@@ -613,6 +721,8 @@ namespace {
         server->on("/api/v1/ota/status", HTTP_GET, handleStatus);
         server->on("/api/v1/ota/abort", HTTP_POST, handleAbort);
         server->on("/api/v1/health", HTTP_GET, handleHealth);
+        server->on("/api/v1/diagnostics/link", HTTP_GET, handleDiagnostics);
+        server->on("/api/v1/diagnostics/screen.bmp", HTTP_GET, handleScreenCapture);
         routesRegistered = true;
     }
 

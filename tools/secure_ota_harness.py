@@ -145,6 +145,9 @@ class SecureOtaSourceContractTests(unittest.TestCase):
         cls.pairing_scene = (root / "src" / "SecurePairingScene.cpp").read_text(
             encoding="utf-8"
         )
+        cls.diagnostics = (root / "src" / "DeviceDiagnostics.cpp").read_text(
+            encoding="utf-8"
+        )
 
     def test_all_secure_endpoints_are_registered(self) -> None:
         for endpoint in (
@@ -196,6 +199,16 @@ class SecureOtaSourceContractTests(unittest.TestCase):
     def test_authenticated_responses_are_bound_to_nonce_counter_status_and_body(self) -> None:
         self.assertIn('"X-TAMS-Response-Auth"', self.service)
         self.assertIn('"response\\n"', self.service)
+
+    def test_wifi_diagnostics_and_screen_capture_use_the_paired_contract(self) -> None:
+        self.assertIn("/api/v1/diagnostics/link", self.service)
+        self.assertIn("/api/v1/diagnostics/screen.bmp", self.service)
+        self.assertIn('authenticate("GET", Path, false, false)', self.service)
+        self.assertIn("attachAuthenticatedBinaryResponse(200, bodyDigest)", self.service)
+        self.assertIn("sendJson(200, device_diagnostics_json())", self.service)
+        self.assertIn("ScreenWidth * ScreenHeight", self.service)
+        self.assertIn('\\"transport\\"', self.diagnostics)
+        self.assertIn('\\"lathe_sync\\"', self.diagnostics)
 
 
 if __name__ == "__main__":

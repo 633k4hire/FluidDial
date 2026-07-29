@@ -50,6 +50,18 @@ extern uint32_t           errorExpire;
 extern bool               inInches;
 extern uint32_t           mySelectedTool;
 
+struct FluidNcLinkDiagnostics {
+    uint32_t received_bytes_last_ms = 0;
+    uint32_t timeout_events         = 0;
+    uint32_t recovery_probes        = 0;
+    uint32_t uart_reinitializations = 0;
+    uint32_t protocol_errors        = 0;
+    uint32_t command_timeouts       = 0;
+    uint32_t last_timeout_ms        = 0;
+    uint32_t last_recovery_ms       = 0;
+    uint8_t  consecutive_timeouts   = 0;
+};
+
 int num_digits();
 
 void send_line(const char* s, int timeout = 2000);
@@ -74,6 +86,7 @@ bool fnc_is_connected();
 void set_disconnected_state();
 
 void update_rx_time();
+const FluidNcLinkDiagnostics& fluidnc_link_diagnostics();
 
 // Bounded boot-time probe over UART: discards bootloader noise then sends
 // XON + status-report queries until FluidNC responds, or `budget_ms`

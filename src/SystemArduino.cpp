@@ -22,6 +22,12 @@
 #include "hal/uart_hal.h"
 
 uart_port_t fnc_uart_port;
+static uint32_t s_uart_rx_bytes        = 0;
+static uint32_t s_uart_tx_bytes        = 0;
+static uint32_t s_uart_rx_high_water   = 0;
+static uint32_t s_uart_reinitializations = 0;
+static uint32_t s_uart_last_rx_ms      = 0;
+static uint32_t s_uart_last_tx_ms      = 0;
 
 #ifdef LED_DEBUG
 static void ledcolor(int n) {
@@ -33,6 +39,8 @@ static void ledcolor(int n) {
 
 static void uart_putchar_impl(uint8_t c) {
     uart_write_bytes(fnc_uart_port, (const char*)&c, 1);
+    ++s_uart_tx_bytes;
+    s_uart_last_tx_ms = millis();
 #ifdef ECHO_FNC_TO_DEBUG
     dbg_write(c);
 #endif
@@ -42,6 +50,8 @@ static int uart_getchar_impl() {
     char c;
     int res = uart_read_bytes(fnc_uart_port, &c, 1, 0);
     if (res == 1) {
+        ++s_uart_rx_bytes;
+        s_uart_last_rx_ms = millis();
 #ifdef LED_DEBUG
         if (c == '\r' || c == '\n') { ledcolor(0); }
         else                        { ledcolor(c & 7); }
@@ -59,7 +69,19 @@ static int uart_getchar_impl() {
 static bool uart_rx_waiting() {
     size_t n = 0;
     uart_get_buffered_data_len(fnc_uart_port, &n);
+    if (n > s_uart_rx_high_water) s_uart_rx_high_water = n;
     return n > 0;
+}
+
+FluidNcTransportDiagnostics fluidnc_transport_diagnostics() {
+    FluidNcTransportDiagnostics value;
+    value.rx_bytes          = s_uart_rx_bytes;
+    value.tx_bytes          = s_uart_tx_bytes;
+    value.rx_high_water     = s_uart_rx_high_water;
+    value.reinitializations = s_uart_reinitializations;
+    value.last_rx_ms        = s_uart_last_rx_ms;
+    value.last_tx_ms        = s_uart_last_tx_ms;
+    return value;
 }
 
 #ifdef USE_WIFI
@@ -131,6 +153,7 @@ void drawPngFile(LGFX_Sprite* sprite, const char* filename, int x, int y) {
 extern void init_hardware();
 
 void init_fnc_uart(int uart_num, int tx_pin, int rx_pin) {
+    ++s_uart_reinitializations;
     fnc_uart_port = (uart_port_t)uart_num;
     int baudrate  = FNC_BAUD;
     uart_driver_delete(fnc_uart_port);
@@ -155,8 +178,10 @@ void init_fnc_uart(int uart_num, int tx_pin, int rx_pin) {
         while (1) {}
         return;
     };
-    uart_driver_install(fnc_uart_port, 256, 0, 0, NULL, ESP_INTR_FLAG_IRAM);
-    uart_set_sw_flow_ctrl(fnc_uart_port, true, 64, 120);
+    // ESP421 and status bursts can exceed the old 256-byte queue. A 4 KiB
+    // queue plus early XOFF prevents truncated JSON and sticky UI state.
+    uart_driver_install(fnc_uart_port, 4096, 0, 0, NULL, ESP_INTR_FLAG_IRAM);
+    uart_set_sw_flow_ctrl(fnc_uart_port, true, 1024, 3072);
     uint32_t baud;
     uart_get_baudrate(fnc_uart_port, &baud);
     bootlog_printf("uart: num=%d tx=%d rx=%d baud=%lu", uart_num, tx_pin, rx_pin, (unsigned long)baud);

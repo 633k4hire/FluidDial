@@ -107,11 +107,21 @@ public:
         setupButton.enable();
     }
     void syncIconAvailability() {
-        if (state == Disconnected ||
-            (machine_profile_is_lathe() && !operator_machine_actions_available())) {
+        if (state == Disconnected || !operator_navigation_available()) {
             disableMachineActions();
-        } else {
-            enableIcons();
+            return;
+        }
+        enableIcons();
+        if (machine_profile_is_lathe()) {
+            if (!operator_basic_motion_actions_available()) {
+                homingButton.disable();
+                jogButton.disable();
+            }
+            if (!operator_machine_actions_available()) {
+                probeButton.disable();
+                toolchangeButton.disable();
+                controlButton.disable();
+            }
         }
     }
     void reDisplay() override {
@@ -130,8 +140,8 @@ public:
         PieMenu::onTouchClick();
     }
     void onStateChange(state_t old_state) override {
-        if (state != Disconnected && (!machine_profile_is_lathe() || operator_machine_actions_available())) {
-            enableIcons();
+        if (state != Disconnected && operator_navigation_available()) {
+            syncIconAvailability();
             if (old_state == Disconnected) {
 #ifdef AUTO_JOG_SCENE
                 if (state == Idle) {

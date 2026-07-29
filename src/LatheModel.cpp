@@ -20,6 +20,9 @@ static LatheStatus        s_pending_status;
 static LatheCommandResult s_last_command;
 static uint32_t           s_last_status_request_ms = 0;
 static bool               s_status_reply_expected  = false;
+static uint32_t           s_next_status_request_ms = 0;
+static uint8_t            s_status_retry_count     = 0;
+static LatheSyncDiagnostics s_sync_diagnostics;
 static int                s_pending_tool_change    = 0;
 static OperatorLinkState  s_operator_link_state   = OperatorLinkState::Disconnected;
 
@@ -27,6 +30,10 @@ static const uint32_t LATHE_M6_TIMEOUT_MS              = 30000;
 static const uint32_t LATHE_COMMAND_TIMEOUT_MS         = 8000;
 static const uint32_t LATHE_COMMAND_REFRESH_MS         = 1000;
 static const uint32_t LATHE_COMMAND_STILL_WAITING_MS   = 5000;
+static const uint32_t LATHE_STATUS_REPLY_TIMEOUT_MS     = 2000;
+static const uint32_t LATHE_STATUS_REFRESH_MS           = 5000;
+static const uint32_t LATHE_STATUS_RETRY_MIN_MS         = 500;
+static const uint32_t LATHE_STATUS_RETRY_MAX_MS         = 4000;
 
 static void complete_command(int command, bool ok, const char* message, bool recoverable, bool timed_out, int target_tool = -1);
 
@@ -227,9 +234,32 @@ bool operator_machine_actions_available() {
            s_status.enabled && !lathe_command_blocks_actions();
 }
 
+bool operator_basic_motion_actions_available() {
+    return state != Disconnected && s_operator_link_state != OperatorLinkState::Updating &&
+           !lathe_command_blocks_actions();
+}
+
+const LatheSyncDiagnostics& lathe_sync_diagnostics() {
+    s_sync_diagnostics.reply_expected = s_status_reply_expected;
+    s_sync_diagnostics.next_retry_ms  = s_next_status_request_ms;
+    return s_sync_diagnostics;
+}
+
+static uint32_t status_retry_delay_ms() {
+    uint32_t delay = LATHE_STATUS_RETRY_MIN_MS << std::min<uint8_t>(s_status_retry_count, 3);
+    return std::min(delay, LATHE_STATUS_RETRY_MAX_MS);
+}
+
+static void schedule_status_retry() {
+    ++s_status_retry_count;
+    ++s_sync_diagnostics.recovery_retries;
+    s_next_status_request_ms = millis() + status_retry_delay_ms();
+}
+
 void operator_note_transport_lost() {
     json_reset_depth();
     s_status_reply_expected = false;
+    s_next_status_request_ms = 0;
     if (s_last_command.pending) {
         complete_command(s_last_command.command,
                          false,
@@ -251,6 +281,8 @@ void operator_note_transport_recovered() {
     json_reset_depth();
     s_status_reply_expected = false;
     s_last_status_request_ms = 0;
+    s_next_status_request_ms = millis();
+    s_status_retry_count     = 0;
     if (!s_last_command.recoverable) s_operator_link_state = OperatorLinkState::Synchronizing;
     request_lathe_status(true);
 }
@@ -271,17 +303,47 @@ void request_lathe_status(bool force) {
     if (state == Disconnected) {
         return;
     }
-    if (!force && s_status.known && !s_status.available) {
-        return;
-    }
 
     uint32_t now = millis();
+    if (s_status_reply_expected &&
+        (uint32_t)(now - s_last_status_request_ms) < LATHE_STATUS_REPLY_TIMEOUT_MS) {
+        return;
+    }
     if (!force && s_last_status_request_ms != 0 && (uint32_t)(now - s_last_status_request_ms) < 500) {
         return;
     }
     s_last_status_request_ms = now;
     s_status_reply_expected  = true;
+    s_next_status_request_ms = 0;
+    ++s_sync_diagnostics.requests;
+    s_sync_diagnostics.last_request_ms = now;
     send_line("[ESP421]", 500);
+}
+
+void lathe_schedule_status_refresh(bool immediate) {
+    uint32_t due = millis() + (immediate ? 0 : LATHE_STATUS_REFRESH_MS);
+    if (!s_next_status_request_ms ||
+        static_cast<int32_t>(due - s_next_status_request_ms) < 0) {
+        s_next_status_request_ms = due;
+    }
+}
+
+void lathe_poll_status() {
+    if (state == Disconnected || s_operator_link_state == OperatorLinkState::Updating) {
+        return;
+    }
+    uint32_t now = millis();
+    if (s_status_reply_expected &&
+        (uint32_t)(now - s_last_status_request_ms) >= LATHE_STATUS_REPLY_TIMEOUT_MS) {
+        s_status_reply_expected = false;
+        ++s_sync_diagnostics.timed_out_replies;
+        lathe_mark_status_unavailable();
+        schedule_status_retry();
+    }
+    if (!s_status_reply_expected && s_next_status_request_ms &&
+        static_cast<int32_t>(now - s_next_status_request_ms) >= 0) {
+        request_lathe_status(true);
+    }
 }
 
 void lathe_mark_status_unavailable() {
@@ -357,10 +419,16 @@ void lathe_set_status_value(const char* id, const char* value) {
 
 void lathe_finish_status_update(bool ok) {
     s_status_reply_expected = false;
+    s_sync_diagnostics.last_reply_ms = millis();
     if (!ok) {
+        ++s_sync_diagnostics.failed_replies;
         lathe_mark_status_unavailable();
+        schedule_status_retry();
         return;
     }
+    ++s_sync_diagnostics.successful_replies;
+    s_status_retry_count     = 0;
+    s_next_status_request_ms = millis() + LATHE_STATUS_REFRESH_MS;
     apply_status(s_pending_status);
 }
 
@@ -368,7 +436,7 @@ bool lathe_consume_status_error() {
     if (!s_status_reply_expected) {
         return false;
     }
-    if ((uint32_t)(millis() - s_last_status_request_ms) > 2000) {
+    if ((uint32_t)(millis() - s_last_status_request_ms) > LATHE_STATUS_REPLY_TIMEOUT_MS) {
         s_status_reply_expected = false;
         return false;
     }
@@ -376,7 +444,9 @@ bool lathe_consume_status_error() {
         s_status_reply_expected = false;
         return false;
     }
+    ++s_sync_diagnostics.failed_replies;
     lathe_mark_status_unavailable();
+    schedule_status_retry();
     return true;
 }
 

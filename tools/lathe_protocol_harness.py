@@ -403,6 +403,8 @@ def assert_maijker_build_contract() -> None:
     platformio = (root / "platformio.ini").read_text(encoding="utf-8")
     hardware = (root / "src" / "HardwareM5Dial.hpp").read_text(encoding="utf-8")
     system = (root / "src" / "SystemArduino.cpp").read_text(encoding="utf-8")
+    main = (root / "src" / "ardmain.cpp").read_text(encoding="utf-8")
+    jog = (root / "src" / "MultiJogScene.cpp").read_text(encoding="utf-8")
 
     section = platformio.split("[env:maijker_m5dial]", 1)[1].split("[env:", 1)[0]
     assert "-DMAIJKER_XZACT_LATHE" in section
@@ -425,9 +427,27 @@ def assert_maijker_build_contract() -> None:
     lathe = (root / "src" / "LatheModel.cpp").read_text(encoding="utf-8")
     assert "void reDisplay() override" in menu
     assert "syncIconAvailability();" in menu
+    assert "operator_basic_motion_actions_available()" in menu
     assert "operator_machine_actions_available()" in menu
     assert "s_status.available && s_status.enabled" in lathe
+    assert "void lathe_schedule_status_refresh(bool immediate)" in lathe
+    assert "void lathe_poll_status()" in lathe
+    assert "request_lathe_status(true);" in lathe
     assert "json_reset_depth();" in lathe
+
+    # The 1 Mbps link must be able to absorb a complete multi-line ESP421
+    # response without a sticky parser failure after homing.
+    assert "uart_driver_install(fnc_uart_port, 4096" in system
+    assert "uart_set_sw_flow_ctrl(fnc_uart_port, true, 1024, 3072)" in system
+    assert "for (int i = 0; i < 512; i++)" in main
+    assert "lathe_poll_status();" in main
+
+    # The M5 commissioning profile is intentionally gentle for the small lathe.
+    assert "static const int DEFAULT_DIST_INDEX = 1;" in jog
+    assert 'getPref("GentleJogV1", &gentle_jog_profile)' in jog
+    assert 'setPref("GentleJogV1", 1)' in jog
+    assert "e4_from_int(inInches ? 24 : 600)" in jog
+    assert "e4_from_int(inInches ? 2 : 60)" in jog
 
 
 def main() -> None:

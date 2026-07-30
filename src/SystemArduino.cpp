@@ -179,9 +179,10 @@ void init_fnc_uart(int uart_num, int tx_pin, int rx_pin) {
         return;
     };
     // ESP421 and status bursts can exceed the old 256-byte queue. A 4 KiB
-    // queue plus early XOFF prevents truncated JSON and sticky UI state.
+    // queue plus FIFO-level XON/XOFF prevents truncated JSON and sticky UI
+    // state. ESP-IDF takes uint8_t thresholds here, so keep them below 128.
     uart_driver_install(fnc_uart_port, 4096, 0, 0, NULL, ESP_INTR_FLAG_IRAM);
-    uart_set_sw_flow_ctrl(fnc_uart_port, true, 1024, 3072);
+    uart_set_sw_flow_ctrl(fnc_uart_port, true, 32, 96);
     uint32_t baud;
     uart_get_baudrate(fnc_uart_port, &baud);
     bootlog_printf("uart: num=%d tx=%d rx=%d baud=%lu", uart_num, tx_pin, rx_pin, (unsigned long)baud);

@@ -646,7 +646,7 @@ public:
     void endDocument() override {
         parser_needs_reset = true;
         if (_cmd == "421" && !_lathe_data_started) {
-            lathe_mark_status_unavailable();
+            lathe_finish_status_update(false);
         }
         if (_cmd == "422" || _cmd == "423") {
             lathe_handle_command_response(atoi(_cmd.c_str()), _status == "ok", _data.c_str());

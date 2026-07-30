@@ -280,17 +280,12 @@ static void connect_init() {
     fnc_realtime((realtime_cmd_t)0x0c);  // Ctrl-L - echo off (UART only)
 #endif
     send_line("$G");                     // Refresh GCode modes
-    send_line("$RI=200");                // Enable auto-reporting every 200 ms
+    send_line("$RI=1000");               // Keep reboot-time UART backlog bounded
     request_lathe_status(true);          // Auto-detect FluidNC lathe support
 
-    // Pre-populate the SD file list on the FIRST connect only. Re-fetching it
-    // on every reconnect is both wasteful and harmful over ESP-NOW
-    static bool s_file_list_primed = false;
-    if (!s_file_list_primed) {
-        s_file_list_primed = true;
-        init_file_list();                // Request SD file list (once)
-    }
-    detect_homing_info();                // Probe axis homing state
+    // File and homing details are loaded when their scenes need them. Sending
+    // those multi-response queries beside ESP421 used to overflow or tear the
+    // streaming parser during the first connection after an M5-only reboot.
 }
 
 extern "C" void show_state(const char* state_string) {

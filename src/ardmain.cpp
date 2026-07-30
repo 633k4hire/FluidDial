@@ -134,6 +134,19 @@ void setup() {
 #else
     activate_scene(menu);
 #endif
+
+#if defined(USE_WIFI)
+    if (wifi_use_uart_mode() && !_first_boot_active) {
+        // The controller keeps its report interval when only the M5 restarts.
+        // Discard reports accumulated while the display was initializing,
+        // slow the persistent stream before entering loop(), then ask for one
+        // fresh report that can safely be parsed now current_scene is valid.
+        flush_fnc_rx(50);
+        resetFlowControl();
+        send_line("$RI=1000", 500);
+        request_status_report();
+    }
+#endif
 }
 
 void loop() {
@@ -207,7 +220,7 @@ void loop() {
     //
     // Drain all pending data, but stop when RX is empty to avoid 
     // unnecessary Wi-Fi polling and reduce idle-loop jitter that can make small jog movements choppy.
-    for (int i = 0; i < 512; i++) {
+    for (int i = 0; i < 4096; i++) {
         fnc_poll();
         if (!fnc_rx_waiting()) {
             break;

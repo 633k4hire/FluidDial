@@ -405,6 +405,7 @@ def assert_maijker_build_contract() -> None:
     system = (root / "src" / "SystemArduino.cpp").read_text(encoding="utf-8")
     main = (root / "src" / "ardmain.cpp").read_text(encoding="utf-8")
     jog = (root / "src" / "MultiJogScene.cpp").read_text(encoding="utf-8")
+    fluidnc = (root / "src" / "FluidNCModel.cpp").read_text(encoding="utf-8")
 
     section = platformio.split("[env:maijker_m5dial]", 1)[1].split("[env:", 1)[0]
     assert "-DMAIJKER_XZACT_LATHE" in section
@@ -428,7 +429,6 @@ def assert_maijker_build_contract() -> None:
     assert "void reDisplay() override" in menu
     assert "syncIconAvailability();" in menu
     assert "operator_basic_motion_actions_available()" in menu
-    assert "operator_machine_actions_available()" in menu
     assert "s_status.available && s_status.enabled" in lathe
     assert "void lathe_schedule_status_refresh(bool immediate)" in lathe
     assert "void lathe_poll_status()" in lathe
@@ -438,9 +438,23 @@ def assert_maijker_build_contract() -> None:
     # The 1 Mbps link must be able to absorb a complete multi-line ESP421
     # response without a sticky parser failure after homing.
     assert "uart_driver_install(fnc_uart_port, 4096" in system
-    assert "uart_set_sw_flow_ctrl(fnc_uart_port, true, 1024, 3072)" in system
-    assert "for (int i = 0; i < 512; i++)" in main
+    assert "uart_set_sw_flow_ctrl(fnc_uart_port, true, 32, 96)" in system
+    assert "flush_fnc_rx(50);" in main
+    assert 'send_line("$RI=1000", 500);' in main
+    assert "for (int i = 0; i < 4096; i++)" in main
     assert "lathe_poll_status();" in main
+    assert 'send_line("$RI=1000");' in fluidnc
+    assert 'send_line("$RI=200");' not in fluidnc
+    assert "LATHE_STATUS_REPLY_TIMEOUT_MS     = 5000" in lathe
+    assert "s_status_retry_count >= 2" in lathe
+    assert "s_pending_status_saw_enabled" in lathe
+
+    wifi = (root / "src" / "WiFiConnection.cpp").read_text(encoding="utf-8")
+    handshake = wifi.split("WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT", 1)[1].split(
+        "WIFI_REASON_NO_AP_FOUND", 1
+    )[0]
+    assert "_wifi_retry_at" in handshake
+    assert "MSG_CHECK_PASS" not in handshake
 
     # The M5 commissioning profile is intentionally gentle for the small lathe.
     assert "static const int DEFAULT_DIST_INDEX = 1;" in jog

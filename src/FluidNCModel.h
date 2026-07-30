@@ -93,6 +93,8 @@ const FluidNcLinkDiagnostics& fluidnc_link_diagnostics();
 // elapses. Returns true on response. Bytes read here are discarded, NOT
 // fed to the parser — current_scene may not be set yet at boot time.
 bool pendant_wait_for_fluidnc_ready(uint32_t budget_ms);
+int  flush_fnc_rx(uint32_t quiet_ms);
+void request_status_report();
 
 extern pos_t toMm(pos_t position);
 extern pos_t fromMm(pos_t position);

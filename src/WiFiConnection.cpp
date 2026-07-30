@@ -1784,20 +1784,19 @@ void wifi_poll() {
                 stop_driver = true;
                 allow_retry = false;
             } else if (reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT) {
-                // Handle cold-boot handshake timeout.
-                // Retry up to 3 times before concluding it is an actual auth failure.
-                _handshake_timeout_count++;
-                if (_handshake_timeout_count >= 3) {
-                    new_msg     = MSG_CHECK_PASS;
-                    stop_driver = true;
-                    allow_retry = false;
-                } else {
-                    // Silent retry after a short delay — do not show an error yet.
-                    stop_driver = false;
-                    allow_retry = true;
-                    if (!_wifi_retry_at) {
-                        _wifi_retry_at = millis() + 2000;
+                // Cold-boot handshake timing is not proof of a bad password.
+                // Keep retrying; the explicit AUTH_FAIL cases above still stop.
+                if (_handshake_timeout_count < 255) {
+                    _handshake_timeout_count++;
+                }
+                stop_driver = false;
+                allow_retry = true;
+                if (!_wifi_retry_at) {
+                    uint32_t retry_delay = 2000U * _handshake_timeout_count;
+                    if (retry_delay > 10000U) {
+                        retry_delay = 10000U;
                     }
+                    _wifi_retry_at = millis() + retry_delay;
                 }
             } else if (reason == WIFI_REASON_NO_AP_FOUND) {
                 // NO_AP_FOUND fires spuriously during retry rescans even when

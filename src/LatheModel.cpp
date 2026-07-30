@@ -23,6 +23,7 @@ static bool               s_status_reply_expected  = false;
 static uint32_t           s_next_status_request_ms = 0;
 static uint8_t            s_status_retry_count     = 0;
 static LatheSyncDiagnostics s_sync_diagnostics;
+static bool               s_pending_status_saw_enabled = false;
 static int                s_pending_tool_change    = 0;
 static OperatorLinkState  s_operator_link_state   = OperatorLinkState::Disconnected;
 
@@ -30,7 +31,7 @@ static const uint32_t LATHE_M6_TIMEOUT_MS              = 30000;
 static const uint32_t LATHE_COMMAND_TIMEOUT_MS         = 8000;
 static const uint32_t LATHE_COMMAND_REFRESH_MS         = 1000;
 static const uint32_t LATHE_COMMAND_STILL_WAITING_MS   = 5000;
-static const uint32_t LATHE_STATUS_REPLY_TIMEOUT_MS     = 2000;
+static const uint32_t LATHE_STATUS_REPLY_TIMEOUT_MS     = 5000;
 static const uint32_t LATHE_STATUS_REFRESH_MS           = 5000;
 static const uint32_t LATHE_STATUS_RETRY_MIN_MS         = 500;
 static const uint32_t LATHE_STATUS_RETRY_MAX_MS         = 4000;
@@ -256,6 +257,25 @@ static void schedule_status_retry() {
     s_next_status_request_ms = millis() + status_retry_delay_ms();
 }
 
+static void note_status_sync_failure(bool timed_out) {
+    s_status_reply_expected = false;
+    if (timed_out) {
+        ++s_sync_diagnostics.timed_out_replies;
+    } else {
+        ++s_sync_diagnostics.failed_replies;
+    }
+
+    // A single late or torn optional-detail response must not turn a healthy,
+    // connected pendant into N/C. Transport loss still invalidates status
+    // immediately; while transport is alive require three consecutive ESP421
+    // failures before discarding the last complete status document.
+    const bool have_valid_status = s_status.known && s_status.available;
+    if (!have_valid_status || s_status_retry_count >= 2) {
+        lathe_mark_status_unavailable();
+    }
+    schedule_status_retry();
+}
+
 void operator_note_transport_lost() {
     json_reset_depth();
     s_status_reply_expected = false;
@@ -335,10 +355,7 @@ void lathe_poll_status() {
     uint32_t now = millis();
     if (s_status_reply_expected &&
         (uint32_t)(now - s_last_status_request_ms) >= LATHE_STATUS_REPLY_TIMEOUT_MS) {
-        s_status_reply_expected = false;
-        ++s_sync_diagnostics.timed_out_replies;
-        lathe_mark_status_unavailable();
-        schedule_status_retry();
+        note_status_sync_failure(true);
     }
     if (!s_status_reply_expected && s_next_status_request_ms &&
         static_cast<int32_t>(now - s_next_status_request_ms) >= 0) {
@@ -361,6 +378,7 @@ void lathe_begin_status_update() {
     s_pending_status.known      = true;
     s_pending_status.available  = true;
     s_pending_status.updated_ms = millis();
+    s_pending_status_saw_enabled = false;
 }
 
 void lathe_set_status_value(const char* id, const char* value) {
@@ -370,6 +388,7 @@ void lathe_set_status_value(const char* id, const char* value) {
 
     if (strcmp(id, "Lathe enabled") == 0) {
         s_pending_status.enabled = parse_bool(value);
+        s_pending_status_saw_enabled = true;
     } else if (strcmp(id, "Spindle speed mode") == 0) {
         s_pending_status.spindle_speed_mode = value ? value : "";
     } else if (strcmp(id, "Diameter mode") == 0) {
@@ -420,10 +439,8 @@ void lathe_set_status_value(const char* id, const char* value) {
 void lathe_finish_status_update(bool ok) {
     s_status_reply_expected = false;
     s_sync_diagnostics.last_reply_ms = millis();
-    if (!ok) {
-        ++s_sync_diagnostics.failed_replies;
-        lathe_mark_status_unavailable();
-        schedule_status_retry();
+    if (!ok || !s_pending_status_saw_enabled) {
+        note_status_sync_failure(false);
         return;
     }
     ++s_sync_diagnostics.successful_replies;

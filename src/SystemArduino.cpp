@@ -109,26 +109,15 @@ extern "C" int  fnc_getchar()          { return uart_getchar_impl(); }
 #endif
 
 // poll_extra: called by fnc_poll() inside fnc_send_line()'s blocking wait loop.
-// In WiFi mode this MUST drive wifi_poll() so the Telnet socket refills _rx_buf
-// and the "ok" response from FluidNC can be observed — otherwise fnc_send_line()
-// blocks for the full 2000 ms timeout on every second jog command.
+// A WiFi machine transport must refill its receive buffer here. The Maijker
+// build uses wired UART and already services its independent OTA WiFi once per
+// application loop; polling WiFi for every UART byte creates long UI stalls.
 extern "C" void poll_extra() {
 #ifdef USE_WIFI
     if (wifi_use_espnow_mode()) {
         espnow_poll();
-    } else {
+    } else if (!wifi_use_uart_mode()) {
         wifi_poll();
-    }
-#endif
-#ifdef USE_M5
-    // fnc_send_line() waits here for a previous acknowledgement. Keep sampling
-    // the M5Dial switches during that wait; HardwareM5Dial retains the edges
-    // until the normal scene dispatcher can safely handle them.
-    static uint32_t last_input_poll_ms = 0;
-    uint32_t        now                = millis();
-    if ((uint32_t)(now - last_input_poll_ms) >= 2) {
-        last_input_poll_ms = now;
-        update_events();
     }
 #endif
 #ifdef DEBUG_TO_USB

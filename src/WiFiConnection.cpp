@@ -51,7 +51,10 @@ extern const char* git_info;
 #define TX_PENDING_SIZE    2048
 #define RT_PENDING_SIZE    32
 #define STATUS_POLL_MS     500         // Send '?' every 500 ms while connected
-#define WIFI_RETRY_DELAY_MS 15000     // Retry WiFi.begin() this long after a failure
+#define WIFI_RETRY_DELAY_MS       15000  // Retry after the AP is not found
+#define WIFI_CONNECT_TIMEOUT_MS   30000  // Allow slow AP association without restarting it
+#define WIFI_DRIVER_OFF_MS          750  // Driver-off recovery delay; handled asynchronously
+#define WIFI_RECONNECT_SETTLE_MS    250  // Let a soft disconnect settle before WiFi.begin()
 #define DNS_RETRY_DELAY_MS  5000     // Retry hostname resolution this long after a failure
 #define TCP_RECONNECT_DELAY_MS 2000   // Retry TCP connect this long after a failure
 #define TCP_CONNECT_TIMEOUT_MS 4000   // Give up an in-progress (non-blocking) connect after this long
@@ -91,6 +94,17 @@ static volatile uint8_t _wifi_disconnect_reason   = 0;        // set by WiFi eve
 static bool             _wifi_ever_connected      = false;    // true once WL_CONNECTED seen; blocks false-positive on drops
 static uint32_t         _wifi_connect_start_ms    = 0;        // millis() when WiFi.begin() was last issued
 static uint8_t          _handshake_timeout_count  = 0;        // consecutive 4-way handshake timeouts; real auth fail after threshold
+static uint8_t          _wifi_reconnect_attempts  = 0;
+static bool             _wifi_auth_failure        = false;
+
+enum class WifiReconnectPhase : uint8_t {
+    Idle,
+    DriverOff,
+    WaitingToBegin,
+};
+
+static WifiReconnectPhase _wifi_reconnect_phase    = WifiReconnectPhase::Idle;
+static uint32_t           _wifi_reconnect_phase_at = 0;
 
 // Ring buffer for characters received from FluidNC over Telnet.
 // Refilled by tcp_refill_rx() from wifi_poll(); read by fnc_getchar().
@@ -1609,6 +1623,80 @@ static void ensure_wifi_event_registered() {
     }
 }
 
+static bool wifi_deadline_reached(uint32_t now, uint32_t deadline) {
+    return deadline && static_cast<int32_t>(now - deadline) >= 0;
+}
+
+static uint32_t wifi_retry_backoff_ms() {
+    switch (_wifi_reconnect_attempts) {
+        case 0:
+        case 1:
+            return 2000;
+        case 2:
+            return 5000;
+        case 3:
+            return 10000;
+        case 4:
+            return 20000;
+        default:
+            return 30000;
+    }
+}
+
+static void schedule_wifi_retry(uint32_t delay_ms) {
+    if (_wifi_auth_failure || _wifi_reconnect_phase != WifiReconnectPhase::Idle) {
+        return;
+    }
+    uint32_t due = millis() + delay_ms;
+    if (!_wifi_retry_at || static_cast<int32_t>(due - _wifi_retry_at) < 0) {
+        _wifi_retry_at = due;
+    }
+}
+
+static void begin_wifi_reconnect(uint32_t now) {
+    _wifi_retry_at         = 0;
+    _wifi_error_msg        = nullptr;
+    _last_wifi_status      = WL_IDLE_STATUS;
+    _wifi_connect_start_ms = 0;
+    if (_wifi_reconnect_attempts < 255) {
+        ++_wifi_reconnect_attempts;
+    }
+
+    WiFi.setAutoReconnect(false);
+    // A full driver restart every second failed association clears the ESP32
+    // station state that can otherwise remain wedged until a power cycle.
+    bool restart_driver = (_wifi_reconnect_attempts % 2) == 0;
+    WiFi.disconnect(restart_driver, false);
+    _wifi_reconnect_phase = restart_driver ? WifiReconnectPhase::DriverOff
+                                           : WifiReconnectPhase::WaitingToBegin;
+    _wifi_reconnect_phase_at = now + (restart_driver ? WIFI_DRIVER_OFF_MS
+                                                      : WIFI_RECONNECT_SETTLE_MS);
+    dbg_printf("WiFi retry %u: %s reconnect\n",
+               _wifi_reconnect_attempts,
+               restart_driver ? "driver-reset" : "soft");
+}
+
+static void service_wifi_reconnect(uint32_t now) {
+    if (_wifi_reconnect_phase == WifiReconnectPhase::Idle ||
+        !wifi_deadline_reached(now, _wifi_reconnect_phase_at)) {
+        return;
+    }
+
+    if (_wifi_reconnect_phase == WifiReconnectPhase::DriverOff) {
+        WiFi.mode(WIFI_STA);
+        WiFi.setSleep(false);
+        _wifi_reconnect_phase    = WifiReconnectPhase::WaitingToBegin;
+        _wifi_reconnect_phase_at = now + WIFI_RECONNECT_SETTLE_MS;
+        return;
+    }
+
+    WiFi.begin(_active_cfg.ssid, _active_cfg.password[0] ? _active_cfg.password : nullptr);
+    _wifi_connect_start_ms    = now;
+    _wifi_reconnect_phase     = WifiReconnectPhase::Idle;
+    _wifi_reconnect_phase_at  = 0;
+    dbg_printf("WiFi retry: associating with %s\n", _active_cfg.ssid);
+}
+
 void wifi_init(bool auto_ap) {
     TransportMode transport = wifi_get_transport();
 #ifdef MAIJKER_XZACT_LATHE
@@ -1670,6 +1758,10 @@ void wifi_init(bool auto_ap) {
     _wifi_ever_connected     = false;
     _wifi_connect_start_ms   = 0;  // set after WiFi.begin() below
     _handshake_timeout_count = 0;
+    _wifi_reconnect_attempts = 0;
+    _wifi_auth_failure       = false;
+    _wifi_reconnect_phase    = WifiReconnectPhase::Idle;
+    _wifi_reconnect_phase_at = 0;
     _dns_retry_at            = 0;
 
     ensure_wifi_event_registered();
@@ -1738,6 +1830,9 @@ void wifi_poll() {
         return;
     }
 
+    uint32_t    now         = millis();
+    service_wifi_reconnect(now);
+
     wl_status_t wifi_status = WiFi.status();
     if (wifi_status != _last_wifi_status) {
         dbg_printf("WiFi status: %s (%d)\n", wifi_status_name(wifi_status), wifi_status);
@@ -1749,6 +1844,10 @@ void wifi_poll() {
             _wifi_retry_at             = 0;
             _wifi_connect_start_ms     = 0;
             _handshake_timeout_count   = 0;
+            _wifi_reconnect_attempts   = 0;
+            _wifi_auth_failure         = false;
+            _wifi_reconnect_phase      = WifiReconnectPhase::Idle;
+            _wifi_reconnect_phase_at   = 0;
             _wifi_disconnect_reason = 0;
             // Re-arm auto-reconnect now that we're up; it was disabled on any
             // prior failure so drops after a successful session still recover.
@@ -1756,8 +1855,8 @@ void wifi_poll() {
         }
     }
 
-    // Early-timeout: show a generic message while the handshake is still in progress
-    static constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 8000;
+    // Surface a slow initial connection without aborting the asynchronous
+    // association. The retry state machine below owns recovery.
     if (!_wifi_ever_connected && !_wifi_error_msg && _wifi_connect_start_ms &&
         (millis() - _wifi_connect_start_ms) > WIFI_CONNECT_TIMEOUT_MS) {
         _wifi_error_msg = "Cannot connect";
@@ -1780,9 +1879,11 @@ void wifi_poll() {
 
             if (reason == WIFI_REASON_AUTH_FAIL   ||
                 reason == WIFI_REASON_AUTH_EXPIRE  ||
-                reason == WIFI_REASON_MIC_FAILURE) {                new_msg     = MSG_CHECK_PASS;
-                stop_driver = true;
-                allow_retry = false;
+                reason == WIFI_REASON_MIC_FAILURE) {
+                new_msg           = MSG_CHECK_PASS;
+                stop_driver       = true;
+                allow_retry       = false;
+                _wifi_auth_failure = true;
             } else if (reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT) {
                 // Cold-boot handshake timing is not proof of a bad password.
                 // Keep retrying; the explicit AUTH_FAIL cases above still stop.
@@ -1796,7 +1897,7 @@ void wifi_poll() {
                     if (retry_delay > 10000U) {
                         retry_delay = 10000U;
                     }
-                    _wifi_retry_at = millis() + retry_delay;
+                    schedule_wifi_retry(retry_delay);
                 }
             } else if (reason == WIFI_REASON_NO_AP_FOUND) {
                 // NO_AP_FOUND fires spuriously during retry rescans even when
@@ -1818,24 +1919,16 @@ void wifi_poll() {
                 _wifi_error_msg = new_msg;
                 // Only arm a retry for not-found; never for wrong password.
                 if (allow_retry && !_wifi_retry_at) {
-                    _wifi_retry_at = millis() + WIFI_RETRY_DELAY_MS;
+                    schedule_wifi_retry(WIFI_RETRY_DELAY_MS);
                 }
                 if (changed) request_redisplay();
             }
         }
     }
 
-    // Re-issue WiFi.begin() after a not-found failure (auth failures never retry).
-    if (_wifi_retry_at && millis() >= _wifi_retry_at) {
-        _wifi_retry_at         = 0;
-        _wifi_error_msg        = nullptr;
-        _last_wifi_status      = WL_IDLE_STATUS;
-        _wifi_connect_start_ms = millis();
-        dbg_printf("WiFi retry: reconnecting to %s\n", _active_cfg.ssid);
-        WiFi.setAutoReconnect(false);  // keep manual control; re-enabled on WL_CONNECTED
-        WiFi.disconnect(false);
-        delay(100);
-        WiFi.begin(_active_cfg.ssid, _active_cfg.password[0] ? _active_cfg.password : nullptr);
+    // Start recovery without blocking UART, input, display, or HTTP polling.
+    if (wifi_deadline_reached(now, _wifi_retry_at)) {
+        begin_wifi_reconnect(now);
     }
 
     // Detect WiFi reconnects so the Telnet socket can be re-opened.
@@ -1879,22 +1972,29 @@ void wifi_poll() {
             _ws_started = false;
         }
         _dns_done = false;  // discard any in-flight DNS result
-        set_disconnected_state();
+        // In the Maijker build WiFi serves OTA/diagnostics only. A WiFi drop
+        // must not overwrite the healthy wired UART machine state with N/C.
+        if (!_secure_ota_only) {
+            set_disconnected_state();
+        }
         // Auto-reconnect is not reliable after the secure OTA HTTP service has
         // handled several short-lived connections. Schedule an explicit
         // reconnect so an installed UART pendant never loses its only firmware
         // update and diagnostic path until someone power-cycles the machine.
         WiFi.setAutoReconnect(false);
-        _wifi_retry_at = millis() + 2000;
+        schedule_wifi_retry(2000);
         _wifi_connect_start_ms = 0;
         dbg_println("WiFi lost");
     }
     _wifi_was_connected = now_connected;
 
-    if (_wifi_ever_connected && !now_connected && !_wifi_retry_at &&
-        _wifi_connect_start_ms &&
-        (millis() - _wifi_connect_start_ms) > WIFI_CONNECT_TIMEOUT_MS) {
-        _wifi_retry_at = millis() + 2000;
+    if (!now_connected && _wifi_reconnect_phase == WifiReconnectPhase::Idle &&
+        !_wifi_retry_at && _wifi_connect_start_ms &&
+        (uint32_t)(now - _wifi_connect_start_ms) > WIFI_CONNECT_TIMEOUT_MS &&
+        !_wifi_auth_failure) {
+        _wifi_connect_start_ms = 0;
+        schedule_wifi_retry(wifi_retry_backoff_ms());
+        dbg_println("WiFi association timed out; retry scheduled");
     }
 
     if (_secure_ota_only) {
@@ -1977,7 +2077,6 @@ void wifi_poll() {
     // (FluidNC auto-report via $RI is also set when state transitions from
     // Disconnected in show_state(), but we poll here as a belt-and-suspenders
     // measure until the first status arrives.)
-    uint32_t now = millis();
     if (now - _last_status_ms >= STATUS_POLL_MS) {
         _last_status_ms = now;
         uint8_t qmark = '?';

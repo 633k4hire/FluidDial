@@ -178,6 +178,16 @@ private:
 public:
     MultiJogScene() : Scene("Jog", 4, jog_help_text) {}
 
+    void diagnosticPreview(int selection) {
+        if (selection == 2) {
+            _selected_mask = (1 << 0) | (1 << 1);
+        } else {
+            _selected_mask = 1 << selection;
+        }
+        reset_jog_runtime();
+        reDisplay();
+    }
+
     e4_t distance(int axis) { return e4_power10(_dist_index[axis] - num_digits()); }
     void unselect_all() { _selected_mask = 0; }
     bool selected(int axis) { return _selected_mask & (1 << axis); }
@@ -804,6 +814,10 @@ public:
         cancel_jog();
     }
 } multiJogScene;
+
+void diagnostic_preview_jog(int selection) {
+    multiJogScene.diagnosticPreview(selection);
+}
 
 bool jog_dynamic_mode() { return multiJogScene.dynamicMode(); }
 void jog_toggle_mode() { multiJogScene.toggleMode(); }

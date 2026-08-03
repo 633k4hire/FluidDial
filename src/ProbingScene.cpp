@@ -24,6 +24,11 @@ private:
 public:
     ProbingScene() : Scene("Probe") {}
 
+    void diagnosticPreview(int item) {
+        selection = item;
+        reDisplay();
+    }
+
     void onDialButtonPress() { pop_scene(); }
 
     void onGreenButtonPress() {
@@ -186,3 +191,7 @@ public:
     }
 };
 ProbingScene probingScene;
+
+void diagnostic_preview_probe(int selection) {
+    probingScene.diagnosticPreview(selection);
+}

@@ -56,6 +56,11 @@ class FirstBootScene : public Scene {
 public:
     FirstBootScene() : Scene("Setup", 4) {}
 
+    void diagnosticPreview(int selection) {
+        _selected = selection < 0 ? 0 : selection >= numChoices() ? numChoices() - 1 : selection;
+        reDisplay();
+    }
+
     void onEntry(void* arg = nullptr) override {
         _entry_ms = millis();
         _selected = 0;
@@ -141,5 +146,9 @@ public:
 };
 
 FirstBootScene firstBootScene;
+
+void diagnostic_preview_first_boot(int selection) {
+    firstBootScene.diagnosticPreview(selection);
+}
 
 #endif  // USE_WIFI

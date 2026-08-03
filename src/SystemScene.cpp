@@ -13,6 +13,8 @@
 #include "System.h"
 #include "FluidNCModel.h"
 
+#include <algorithm>
+
 struct SysItem {
     const char* label;
     const char* sublabel;
@@ -49,6 +51,11 @@ void SystemScene::onEncoder(int delta) {
     _selected += delta;
     if (_selected < 0)        _selected = N_ITEMS - 1;
     if (_selected >= N_ITEMS) _selected = 0;
+    reDisplay();
+}
+
+void SystemScene::diagnosticPreview(int selection) {
+    _selected = std::max(0, std::min(selection, N_ITEMS - 1));
     reDisplay();
 }
 
@@ -148,5 +155,9 @@ void SystemScene::reDisplay() {
 }
 
 SystemScene systemScene;
+
+void diagnostic_preview_system(int selection) {
+    systemScene.diagnosticPreview(selection);
+}
 
 #endif  // USE_WIFI

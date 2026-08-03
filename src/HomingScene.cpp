@@ -96,6 +96,11 @@ private:
 public:
     HomingScene() : Scene("Home", 4) {}
 
+    void diagnosticPreview(int selection) {
+        _axis_to_home = selection - 1;
+        reDisplay();
+    }
+
     bool is_homing(int axis) { return can_home(axis) && (_axis_to_home == -1 || _axis_to_home == axis); }
     void onEntry(void* arg) override {
         if (state == Idle && _auto) {
@@ -240,3 +245,7 @@ public:
     }
 };
 HomingScene homingScene;
+
+void diagnostic_preview_homing(int selection) {
+    homingScene.diagnosticPreview(selection);
+}

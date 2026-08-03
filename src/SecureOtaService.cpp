@@ -2,6 +2,7 @@
 
 #include "SecureOtaService.h"
 #include "DeviceDiagnostics.h"
+#include "DiagnosticScreens.h"
 #include "LatheModel.h"
 #include "System.h"
 #include "TamsFirmwarePackage.h"
@@ -491,6 +492,16 @@ namespace {
             return sendError(503, "240x240 RGB332 canvas is unavailable");
         }
 
+        String screenId = server->arg("screen");
+        bool previewRendered = false;
+        if (screenId.length()) {
+            previewRendered = diagnostic_render_screen(screenId.c_str());
+            if (!previewRendered) {
+                return sendError(422, "unknown diagnostic screen id");
+            }
+            pixels = static_cast<const uint8_t*>(canvas.getBuffer());
+        }
+
         std::array<uint8_t, BmpHeaderBytes> header;
         buildScreenBmpHeader(header);
         uint8_t bodyDigest[32];
@@ -503,7 +514,12 @@ namespace {
         mbedtls_sha256_free(&context);
 
         server->sendHeader("Cache-Control", "no-store");
-        server->sendHeader("Content-Disposition", "attachment; filename=\"m5dial-current.bmp\"");
+        if (screenId.length()) {
+            server->sendHeader("X-TAMS-Screen-Id", screenId);
+            server->sendHeader("Content-Disposition", "attachment; filename=\"m5dial-" + screenId + ".bmp\"");
+        } else {
+            server->sendHeader("Content-Disposition", "attachment; filename=\"m5dial-current.bmp\"");
+        }
         attachAuthenticatedBinaryResponse(200, bodyDigest);
         secureZero(bodyDigest, sizeof(bodyDigest));
         server->setContentLength(BmpResponseBytes);
@@ -513,6 +529,9 @@ namespace {
             size_t length = std::min<size_t>(2048, ScreenPixelBytes - offset);
             server->sendContent(reinterpret_cast<const char*>(pixels + offset), length);
             delay(0);
+        }
+        if (previewRendered) {
+            diagnostic_restore_screen();
         }
     }
     void sendError(int code, const char* error) {

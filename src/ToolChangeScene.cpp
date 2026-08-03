@@ -383,6 +383,13 @@ private:
 public:
     ToolChangeScene() : Scene("Tools", 4) {}
 
+    void diagnosticPreview(int page) {
+        _lathe_page = page == 1 ? LathePage::Setup : page == 2 ? LathePage::TouchOff : LathePage::Tools;
+        load_lathe_prefs();
+        seed_active_tool_from_status();
+        reDisplay();
+    }
+
     void onDialButtonPress() override {
         if (!lathe_mode_active()) {
             pop_scene();
@@ -580,3 +587,7 @@ public:
     }
 };
 ToolChangeScene toolchangeScene;
+
+void diagnostic_preview_tools(int selection) {
+    toolchangeScene.diagnosticPreview(selection);
+}

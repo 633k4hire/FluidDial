@@ -419,6 +419,11 @@ def assert_maijker_build_contract() -> None:
     assert "GREEN_BUTTON_PIN  = GPIO_NUM_2" in hardware
     assert "fnc_putchar(c);  // So you can type commands to FluidNC" in system
     assert "#ifdef DEBUG_TO_USB" in system
+    poll_extra = system.split('extern "C" void poll_extra()', 1)[1].split(
+        "#ifdef DEBUG_TO_USB", 1
+    )[0]
+    assert "else if (!wifi_use_uart_mode())" in poll_extra
+    assert "update_events();" not in poll_extra
 
     wifi = (root / "src" / "WiFiConnection.cpp").read_text(encoding="utf-8")
     assert "#ifdef MAIJKER_XZACT_LATHE" in wifi
@@ -455,6 +460,18 @@ def assert_maijker_build_contract() -> None:
     )[0]
     assert "_wifi_retry_at" in handshake
     assert "MSG_CHECK_PASS" not in handshake
+
+    # WiFi recovery must not starve the wired HMI while the AP is slow or the
+    # ESP32 station driver needs to be restarted.
+    assert "WIFI_CONNECT_TIMEOUT_MS   30000" in wifi
+    assert "enum class WifiReconnectPhase" in wifi
+    assert "service_wifi_reconnect(now);" in wifi
+    assert "WiFi.disconnect(restart_driver, false);" in wifi
+    assert "if (!_secure_ota_only) {\n            set_disconnected_state();" in wifi
+    retry = wifi.split("// Start recovery without blocking", 1)[1].split(
+        "// Detect WiFi reconnects", 1
+    )[0]
+    assert "delay(" not in retry
 
     # The M5 commissioning profile is intentionally gentle for the small lathe.
     assert "static const int DEFAULT_DIST_INDEX = 1;" in jog

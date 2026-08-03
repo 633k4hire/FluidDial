@@ -7,6 +7,8 @@
 #include "Drawing.h"
 #include "System.h"
 
+#include <algorithm>
+
 struct TransportItem {
     const char*   label;
     const char*   sublabel;
@@ -50,6 +52,11 @@ void TransportScene::onEntry(void* /*arg*/) {
 
 void TransportScene::onEncoder(int delta) {
     _selected = (_selected + delta + N_TRANSPORT) % N_TRANSPORT;
+    reDisplay();
+}
+
+void TransportScene::diagnosticPreview(int selection) {
+    _selected = std::max(0, std::min(selection, N_TRANSPORT - 1));
     reDisplay();
 }
 
@@ -128,5 +135,9 @@ void TransportScene::reDisplay() {
 }
 
 TransportScene transportScene;
+
+void diagnostic_preview_transport(int selection) {
+    transportScene.diagnosticPreview(selection);
+}
 
 #endif

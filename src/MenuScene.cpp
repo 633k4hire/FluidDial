@@ -173,3 +173,7 @@ Scene* initMenus() {
 
     return &menuScene;
 }
+
+void diagnostic_preview_main_menu(int selection) {
+    menuScene.select(selection);
+}

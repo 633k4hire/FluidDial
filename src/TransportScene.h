@@ -17,6 +17,7 @@ public:
     void onRedButtonPress() override;
     void onTouchClick() override;
     void reDisplay() override;
+    void diagnosticPreview(int selection);
 
 private:
     void confirmSelection();

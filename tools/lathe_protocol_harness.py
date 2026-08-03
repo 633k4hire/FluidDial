@@ -508,6 +508,9 @@ def assert_maijker_build_contract() -> None:
     assert 'setPref("GentleJogV1", 1)' in jog
     assert "e4_from_int(inInches ? 24 : 600)" in jog
     assert "e4_from_int(inInches ? 2 : 60)" in jog
+    assert "static const uint32_t PRECISE_MOVE_MS = 100;" in jog
+    assert "e4_t precise_jog_feed(e4_t move)" in jog
+    assert "e4_t     feed = precise_jog_feed(move);" in jog
 
 
 def main() -> None:

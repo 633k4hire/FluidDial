@@ -130,6 +130,10 @@ private:
     static const uint32_t MPG_INTERVAL_MS = 30;   // min spacing between jog commands
     static const uint32_t MPG_STOP_MS     = 280;  // dial-still time that ends a jog
     static const uint32_t QUEUE_CAP_MS    = 180;  // max motion kept buffered ahead (Timed)
+    // Precise-mode detents are independent, exact-position moves. Pace each
+    // one over roughly 100 ms so a 0.01/0.1 mm jog does not hit the planner as
+    // a maximum-feed start/stop impulse.
+    static const uint32_t PRECISE_MOVE_MS = 100;
 
     static const int      JOG_WINDOW = 8;
 
@@ -550,6 +554,13 @@ public:
         return move;
     }
 
+    e4_t precise_jog_feed(e4_t move) {
+        // feed[units/min] = move[units] * 60000 ms/min / target duration[ms]
+        int64_t feed64 = (int64_t)move * 60000 / PRECISE_MOVE_MS;
+        e4_t   f_max  = e4_from_int(inInches ? 24 : 600);
+        return feed64 > f_max ? f_max : (e4_t)feed64;
+    }
+
     void send_mpg_jog(int delta, e4_t feed) {
         std::string cmd("$J=G91");
         cmd += inInches ? "G20" : "G21";
@@ -714,7 +725,7 @@ public:
         if ((now - _last_mpg_ms) >= MPG_INTERVAL_MS) {
             JogFlowControl flow = jog_flow_control();
             e4_t     move = mpg_move_distance(_mpg_accum);
-            e4_t     feed = e4_from_int(inInches ? 24 : 600);
+            e4_t     feed = precise_jog_feed(move);
             uint32_t outstanding =
                 flow == JogFlowControl::Timed ? jog_outstanding_ms(now) : 0;
             if (jog_send_blocked(now)) {

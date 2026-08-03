@@ -120,6 +120,17 @@ extern "C" void poll_extra() {
         wifi_poll();
     }
 #endif
+#ifdef USE_M5
+    // fnc_send_line() waits here for a previous acknowledgement. Keep sampling
+    // the M5Dial switches during that wait; HardwareM5Dial retains the edges
+    // until the normal scene dispatcher can safely handle them.
+    static uint32_t last_input_poll_ms = 0;
+    uint32_t        now                = millis();
+    if ((uint32_t)(now - last_input_poll_ms) >= 2) {
+        last_input_poll_ms = now;
+        update_events();
+    }
+#endif
 #ifdef DEBUG_TO_USB
     if (debugPort.available()) {
         char c = debugPort.read();

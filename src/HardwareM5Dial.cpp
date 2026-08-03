@@ -21,6 +21,39 @@ m5::Button_Class& dialButton = M5Dial.BtnA;
 m5::Button_Class  greenButton;
 m5::Button_Class  redButton;
 
+namespace {
+struct SwitchEvent {
+    bool    pressed;
+    uint8_t button;
+};
+
+// M5Dial button state is edge-triggered. Controller command waits can keep the
+// scene loop busy long enough for a short press and release to occur between
+// dispatches, so retain those edges until dispatch_events() consumes them.
+constexpr uint8_t SWITCH_EVENT_QUEUE_SIZE = 32;
+SwitchEvent       switch_events[SWITCH_EVENT_QUEUE_SIZE];
+uint8_t           switch_event_head = 0;
+uint8_t           switch_event_tail = 0;
+
+void queue_switch_event(bool pressed, uint8_t button) {
+    uint8_t next = (switch_event_head + 1) % SWITCH_EVENT_QUEUE_SIZE;
+    if (next == switch_event_tail) {
+        return;
+    }
+    switch_events[switch_event_head] = { pressed, button };
+    switch_event_head                = next;
+}
+
+void capture_switch_events(m5::Button_Class& source, uint8_t button) {
+    if (source.wasPressed()) {
+        queue_switch_event(true, button);
+    }
+    if (source.wasReleased()) {
+        queue_switch_event(false, button);
+    }
+}
+}  // namespace
+
 bool round_display = true;
 
 void init_hardware() {
@@ -91,37 +124,14 @@ void system_background() {
 }
 
 bool switch_button_touched(bool& pressed, int& button) {
-    if (redButton.wasPressed()) {
-        button  = 0;
-        pressed = true;
-        return true;
+    if (switch_event_tail == switch_event_head) {
+        return false;
     }
-    if (redButton.wasReleased()) {
-        button  = 0;
-        pressed = false;
-        return true;
-    }
-    if (dialButton.wasPressed()) {
-        button  = 1;
-        pressed = true;
-        return true;
-    }
-    if (dialButton.wasReleased()) {
-        button  = 1;
-        pressed = false;
-        return true;
-    }
-    if (greenButton.wasPressed()) {
-        button  = 2;
-        pressed = true;
-        return true;
-    }
-    if (greenButton.wasReleased()) {
-        button  = 2;
-        pressed = false;
-        return true;
-    }
-    return false;
+    const SwitchEvent& event = switch_events[switch_event_tail];
+    pressed                 = event.pressed;
+    button                  = event.button;
+    switch_event_tail       = (switch_event_tail + 1) % SWITCH_EVENT_QUEUE_SIZE;
+    return true;
 }
 
 bool screen_encoder(int x, int y, int& delta) {
@@ -139,6 +149,10 @@ void update_events() {
     // The red and green buttons are active low
     redButton.setRawState(ms, !m5gfx::gpio_in(RED_BUTTON_PIN));
     greenButton.setRawState(ms, !m5gfx::gpio_in(GREEN_BUTTON_PIN));
+
+    capture_switch_events(redButton, 0);
+    capture_switch_events(dialButton, 1);
+    capture_switch_events(greenButton, 2);
 }
 
 void ackBeep() {

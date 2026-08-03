@@ -47,17 +47,9 @@ namespace {
         return dirty ? build + " dev" : build;
     }
 
-    void drawAboutRow(int y, const char* label, const char* value, int color) {
+    void drawAboutLine(int y, const char* value, int color = WHITE) {
         drawOutlinedRect(30, y, 180, 26, NAVY, DARKGREY);
-        int mid = y + 15;
-        auto_text(std::string(label ? label : ""), 39, mid, 66, DARKGREY, TINY, middle_left);
-        drawRect(109, y + 5, 1, 16, 0, DARKGREY);
-        auto_text(std::string(value ? value : ""), 201, mid, 87, color, TINY, middle_right);
-    }
-
-    void drawAboutControlRow(int y, const char* value) {
-        drawOutlinedRect(30, y, 180, 26, NAVY, DARKGREY);
-        auto_text(std::string(value ? value : ""), 120, y + 15, 164, WHITE, TINY, middle_center);
+        auto_text(std::string(value ? value : ""), 120, y + 15, 164, color, TINY, middle_center);
     }
 }
 
@@ -160,18 +152,20 @@ void AboutScene::reDisplay() {
             centered_text(version.c_str(), 73, WHITE, TINY);
             centered_text(build.c_str(), 91, DARKGREY, TINY);
 
-            drawAboutRow(108, "FluidNC", fnc_is_connected() ? "UART 1M / Online" : "UART 1M / N/C", fnc_is_connected() ? GREEN : RED);
+            drawAboutLine(108, fnc_is_connected() ? "FNC UART1M / Online" : "FNC UART1M / N/C", fnc_is_connected() ? GREEN : RED);
 #ifdef USE_WIFI
-            drawAboutRow(139, "Wi-Fi", wifi_is_connected() ? wifi_local_ip() : "Offline", wifi_is_connected() ? GREEN : LIGHTGREY);
+            std::string wifi = wifi_is_connected() ? std::string("IP ") + wifi_local_ip() : "Wi-Fi Offline";
+            drawAboutLine(139, wifi.c_str(), wifi_is_connected() ? GREEN : LIGHTGREY);
 #else
-            drawAboutRow(139, "Wi-Fi", "Unavailable", DARKGREY);
+            drawAboutLine(139, "Wi-Fi unavailable", DARKGREY);
 #endif
-            drawAboutRow(170, "Machine", my_state_string, state == Alarm ? RED : state == Idle ? GREEN : YELLOW);
+            std::string machine = std::string("Machine / ") + my_state_string;
+            drawAboutLine(170, machine.c_str(), state == Alarm ? RED : state == Idle ? GREEN : YELLOW);
         } else {
             centered_text("Controls", 47, GREEN, SMALL);
-            drawAboutControlRow(70, "Dial: select/change");
-            drawAboutControlRow(104, "Touch: open/advance");
-            drawAboutControlRow(138, "Red/green: context");
+            drawAboutLine(70, "Dial: select/change");
+            drawAboutLine(104, "Touch: open/next");
+            drawAboutLine(138, "Red/green: context");
             centered_text("FluidDial contributors", 181, DARKGREY, TINY);
         }
 

@@ -119,12 +119,12 @@ void MachineHealthScene::drawHeader(const char* title, int title_color) {
 void MachineHealthScene::drawRow(int y, const char* label, const char* value, int value_color) {
     drawOutlinedRect(RowX, y, RowW, RowH, NAVY, DARKGREY);
     int mid = y + RowH / 2 + 2;
-    auto_text(std::string(label ? label : ""), RowX + 9, mid, 66, DARKGREY, TINY, middle_left);
-    drawRect(RowX + 79, y + 5, 1, RowH - 10, 0, DARKGREY);
+    auto_text(std::string(label ? label : ""), RowX + 9, mid, 52, DARKGREY, TINY, middle_left);
+    drawRect(RowX + 68, y + 5, 1, RowH - 10, 0, DARKGREY);
     auto_text(std::string(value ? value : ""),
               RowX + RowW - 9,
               mid,
-              92,
+              103,
               value_color,
               TINY,
               middle_right);
@@ -146,7 +146,7 @@ void MachineHealthScene::drawOverview() {
     char summary[48];
     const char* spindle = lathe.effective_rpm > 0.5f ? "RUN" : "STOP";
     snprintf(summary, sizeof(summary), "T%s / %s", lathe.active_tool > 0 ? intToCStr(lathe.active_tool) : "-", spindle);
-    drawRow(RowY[3], "Machining", summary, lathe.effective_rpm > 0.5f ? GREEN : LIGHTGREY);
+    drawRow(RowY[3], "Tool", summary, lathe.effective_rpm > 0.5f ? GREEN : LIGHTGREY);
 }
 
 void MachineHealthScene::drawAlarm() {
@@ -172,7 +172,7 @@ void MachineHealthScene::drawAlarm() {
 
     const char* guidance = "Reset required";
     if (machine_alarm_is_homing(shown_alarm)) {
-        guidance = "Home X and Z";
+        guidance = "Home X/Z";
     } else if (shown_alarm == 4 || shown_alarm == 5) {
         guidance = "Check probe input";
     }
@@ -189,10 +189,10 @@ void MachineHealthScene::drawReadiness() {
     bool z_limit = axisLimitActive(z_axis);
     char x_status[24];
     char z_status[24];
-    snprintf(x_status, sizeof(x_status), "%s / %s", x_homed ? "HOME" : "NEEDS", x_limit ? "LIM ON" : "CLR");
-    snprintf(z_status, sizeof(z_status), "%s / %s", z_homed ? "HOME" : "NEEDS", z_limit ? "LIM ON" : "CLR");
-    drawRow(RowY[0], "X axis", x_status, x_limit ? RED : x_homed ? GREEN : YELLOW);
-    drawRow(RowY[1], "Z axis", z_status, z_limit ? RED : z_homed ? GREEN : YELLOW);
+    snprintf(x_status, sizeof(x_status), "%s / %s", x_homed ? "HOME" : "NEED", x_limit ? "LIM ON" : "CLR");
+    snprintf(z_status, sizeof(z_status), "%s / %s", z_homed ? "HOME" : "NEED", z_limit ? "LIM ON" : "CLR");
+    drawRow(RowY[0], "X", x_status, x_limit ? RED : x_homed ? GREEN : YELLOW);
+    drawRow(RowY[1], "Z", z_status, z_limit ? RED : z_homed ? GREEN : YELLOW);
     drawRow(RowY[2], "Probe", myProbeSwitch ? "Active" : "Clear", myProbeSwitch ? YELLOW : GREEN);
 
     const char* action = "Ready";
@@ -210,7 +210,7 @@ void MachineHealthScene::drawReadiness() {
         action = "Synchronizing";
         action_color = YELLOW;
     }
-    drawRow(RowY[3], "Actions", action, action_color);
+    drawRow(RowY[3], "Action", action, action_color);
 }
 
 void MachineHealthScene::drawConnections() {
@@ -218,7 +218,7 @@ void MachineHealthScene::drawConnections() {
     bool fixture_fault = _preview == Preview::EncoderFault;
     drawHeader("Connections", fixture_fault || lathe.feedback_fault ? RED : GREEN);
     drawRow(RowY[0], "UART", fnc_is_connected() ? "Online" : "N/C", fnc_is_connected() ? GREEN : RED);
-    drawRow(RowY[1], "Operator", operatorLinkText(), operatorLinkColor());
+    drawRow(RowY[1], "Sync", operatorLinkText(), operatorLinkColor());
 
 #ifdef USE_WIFI
     const char* wifi_value = wifi_is_connected() ? wifi_local_ip() : "Offline";
@@ -242,7 +242,7 @@ void MachineHealthScene::drawConnections() {
         capability = "Threading ready";
         capability_color = GREEN;
     }
-    drawRow(RowY[3], "Spindle", capability, capability_color);
+    drawRow(RowY[3], "Encoder", capability, capability_color);
 }
 
 void MachineHealthScene::reDisplay() {

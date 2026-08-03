@@ -49,8 +49,15 @@ namespace {
 
     void drawAboutRow(int y, const char* label, const char* value, int color) {
         drawOutlinedRect(30, y, 180, 26, NAVY, DARKGREY);
-        text(label, 39, y + 15, DARKGREY, TINY, middle_left);
-        auto_text(std::string(value ? value : ""), 201, y + 15, 112, color, SMALL, middle_right);
+        int mid = y + 15;
+        auto_text(std::string(label ? label : ""), 39, mid, 66, DARKGREY, TINY, middle_left);
+        drawRect(109, y + 5, 1, 16, 0, DARKGREY);
+        auto_text(std::string(value ? value : ""), 201, mid, 87, color, TINY, middle_right);
+    }
+
+    void drawAboutControlRow(int y, const char* value) {
+        drawOutlinedRect(30, y, 180, 26, NAVY, DARKGREY);
+        auto_text(std::string(value ? value : ""), 120, y + 15, 164, WHITE, TINY, middle_center);
     }
 }
 
@@ -162,11 +169,10 @@ void AboutScene::reDisplay() {
             drawAboutRow(170, "Machine", my_state_string, state == Alarm ? RED : state == Idle ? GREEN : YELLOW);
         } else {
             centered_text("Controls", 47, GREEN, SMALL);
-            drawAboutRow(65, "Dial", "Select / change", WHITE);
-            drawAboutRow(96, "Touch", "Open / advance", WHITE);
-            drawAboutRow(127, "Red / green", "Context actions", WHITE);
-            drawAboutRow(158, "Help", "Center opens Health", CYAN);
-            centered_text("FluidDial contributors", 194, DARKGREY, TINY);
+            drawAboutControlRow(70, "Dial: select/change");
+            drawAboutControlRow(104, "Touch: open/advance");
+            drawAboutControlRow(138, "Red/green: context");
+            centered_text("FluidDial contributors", 181, DARKGREY, TINY);
         }
 
         drawButtonLegends("Back", "Settings", "Next");

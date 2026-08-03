@@ -449,7 +449,8 @@ def assert_maijker_build_contract() -> None:
     # surfaces. Safety actions remain centralized so labels and behavior agree.
     assert "push_scene(&machineHealthScene)" in menu
     assert 'drawButtonLegends("Back", "Settings", "Next")' in about
-    assert 'centered_text("Lathe Status"' in status
+    assert "draw_state_pill(shown_state)" in status
+    assert 'text(inInches ? "in" : "mm"' in status
     lathe_dashboard = status.split("void draw_lathe_dashboard()", 1)[1].split("public:", 1)[0]
     assert "axis_char == 'X' || axis_char == 'Z'" in lathe_dashboard
     assert "Thread unsafe" not in status

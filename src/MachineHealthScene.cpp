@@ -55,6 +55,14 @@ namespace {
         }
         return -1;
     }
+
+    bool axisLimitActive(int display_axis) {
+        if (display_axis < 0) {
+            return false;
+        }
+        int machine_axis = profile_machine_axis(display_axis);
+        return machine_axis >= 0 && machine_axis < 6 && myLimitSwitches[machine_axis];
+    }
 }
 
 void MachineHealthScene::onEntry(void* arg) {
@@ -99,7 +107,7 @@ void MachineHealthScene::onPoll() {
 
 void MachineHealthScene::drawHeader(const char* title, int title_color) {
     background();
-    centered_text("Machine Health", 14, WHITE, SMALL);
+    centered_text("HEALTH", 16, WHITE, TINY);
     drawRect(70, 25, 100, 1, 0, DARKGREY);
     centered_text(title, 37, title_color, TINY);
 
@@ -110,33 +118,35 @@ void MachineHealthScene::drawHeader(const char* title, int title_color) {
 
 void MachineHealthScene::drawRow(int y, const char* label, const char* value, int value_color) {
     drawOutlinedRect(RowX, y, RowW, RowH, NAVY, DARKGREY);
-    text(label, RowX + 9, y + RowH / 2 + 2, DARKGREY, TINY, middle_left);
+    int mid = y + RowH / 2 + 2;
+    auto_text(std::string(label ? label : ""), RowX + 9, mid, 66, DARKGREY, TINY, middle_left);
+    drawRect(RowX + 79, y + 5, 1, RowH - 10, 0, DARKGREY);
     auto_text(std::string(value ? value : ""),
               RowX + RowW - 9,
-              y + RowH / 2 + 2,
-              105,
+              mid,
+              92,
               value_color,
-              SMALL,
+              TINY,
               middle_right);
 }
 
 void MachineHealthScene::drawOverview() {
     drawHeader("Overview", state == Alarm ? RED : state == Idle ? GREEN : YELLOW);
-    drawRow(RowY[0], "Controller", fnc_is_connected() ? "Online" : "N/C", fnc_is_connected() ? GREEN : RED);
-    drawRow(RowY[1], "Machine", my_state_string, state == Alarm ? RED : state == Idle ? GREEN : YELLOW);
+    drawRow(RowY[0], "Link", fnc_is_connected() ? "Online" : "N/C", fnc_is_connected() ? GREEN : RED);
+    drawRow(RowY[1], "State", my_state_string, state == Alarm ? RED : state == Idle ? GREEN : YELLOW);
 
     int x_axis = displayAxis('X');
     int z_axis = displayAxis('Z');
     bool x_homed = x_axis >= 0 && is_axis_homed(x_axis);
     bool z_homed = z_axis >= 0 && is_axis_homed(z_axis);
-    const char* homing = x_homed && z_homed ? "X OK  Z OK" : x_homed ? "X OK  Z HOME" : z_homed ? "X HOME  Z OK" : "X HOME  Z HOME";
-    drawRow(RowY[2], "Homing", homing, x_homed && z_homed ? GREEN : YELLOW);
+    const char* homing = x_homed && z_homed ? "X/Z ready" : x_homed ? "X ok Z home" : z_homed ? "X home Z ok" : "X/Z needed";
+    drawRow(RowY[2], "Home", homing, x_homed && z_homed ? GREEN : YELLOW);
 
     const LatheStatus& lathe = lathe_status();
     char summary[48];
     const char* spindle = lathe.effective_rpm > 0.5f ? "RUN" : "STOP";
-    snprintf(summary, sizeof(summary), "T%s  %s", lathe.active_tool > 0 ? intToCStr(lathe.active_tool) : "-", spindle);
-    drawRow(RowY[3], "Tool / spindle", summary, lathe.effective_rpm > 0.5f ? GREEN : LIGHTGREY);
+    snprintf(summary, sizeof(summary), "T%s / %s", lathe.active_tool > 0 ? intToCStr(lathe.active_tool) : "-", spindle);
+    drawRow(RowY[3], "Machining", summary, lathe.effective_rpm > 0.5f ? GREEN : LIGHTGREY);
 }
 
 void MachineHealthScene::drawAlarm() {
@@ -147,10 +157,10 @@ void MachineHealthScene::drawAlarm() {
     drawHeader("Alarms", active_alarm ? RED : GREEN);
 
     if (!active_alarm && !errorActive()) {
-        drawRow(RowY[0], "State", "No active alarms", GREEN);
+        drawRow(RowY[0], "State", "No alarms", GREEN);
         drawRow(RowY[1], "Alarm", "None", LIGHTGREY);
         drawRow(RowY[2], "Error", "None", LIGHTGREY);
-        drawRow(RowY[3], "Action", "Machine ready", GREEN);
+        drawRow(RowY[3], "Action", "Ready", GREEN);
         return;
     }
 
@@ -175,21 +185,15 @@ void MachineHealthScene::drawReadiness() {
     int z_axis = displayAxis('Z');
     bool x_homed = x_axis >= 0 && is_axis_homed(x_axis);
     bool z_homed = z_axis >= 0 && is_axis_homed(z_axis);
-    drawRow(RowY[0], "X axis", x_homed ? "Homed" : "Needs home", x_homed ? GREEN : YELLOW);
-    drawRow(RowY[1], "Z axis", z_homed ? "Homed" : "Needs home", z_homed ? GREEN : YELLOW);
-
-    bool limit_active = false;
-    for (int display_axis_value : { x_axis, z_axis }) {
-        if (display_axis_value >= 0) {
-            int machine_axis = profile_machine_axis(display_axis_value);
-            if (machine_axis >= 0 && machine_axis < 6 && myLimitSwitches[machine_axis]) {
-                limit_active = true;
-            }
-        }
-    }
-    char inputs[36];
-    snprintf(inputs, sizeof(inputs), "Limits %s  Probe %s", limit_active ? "ON" : "Clear", myProbeSwitch ? "ON" : "Clear");
-    drawRow(RowY[2], "Inputs", inputs, limit_active ? RED : myProbeSwitch ? YELLOW : GREEN);
+    bool x_limit = axisLimitActive(x_axis);
+    bool z_limit = axisLimitActive(z_axis);
+    char x_status[24];
+    char z_status[24];
+    snprintf(x_status, sizeof(x_status), "%s / %s", x_homed ? "HOME" : "NEEDS", x_limit ? "LIM ON" : "CLR");
+    snprintf(z_status, sizeof(z_status), "%s / %s", z_homed ? "HOME" : "NEEDS", z_limit ? "LIM ON" : "CLR");
+    drawRow(RowY[0], "X axis", x_status, x_limit ? RED : x_homed ? GREEN : YELLOW);
+    drawRow(RowY[1], "Z axis", z_status, z_limit ? RED : z_homed ? GREEN : YELLOW);
+    drawRow(RowY[2], "Probe", myProbeSwitch ? "Active" : "Clear", myProbeSwitch ? YELLOW : GREEN);
 
     const char* action = "Ready";
     int action_color = GREEN;
@@ -206,21 +210,21 @@ void MachineHealthScene::drawReadiness() {
         action = "Synchronizing";
         action_color = YELLOW;
     }
-    drawRow(RowY[3], "Machine actions", action, action_color);
+    drawRow(RowY[3], "Actions", action, action_color);
 }
 
 void MachineHealthScene::drawConnections() {
     const LatheStatus& lathe = lathe_status();
     bool fixture_fault = _preview == Preview::EncoderFault;
     drawHeader("Connections", fixture_fault || lathe.feedback_fault ? RED : GREEN);
-    drawRow(RowY[0], "FluidNC UART", fnc_is_connected() ? "Online" : "N/C", fnc_is_connected() ? GREEN : RED);
-    drawRow(RowY[1], "Operator sync", operatorLinkText(), operatorLinkColor());
+    drawRow(RowY[0], "UART", fnc_is_connected() ? "Online" : "N/C", fnc_is_connected() ? GREEN : RED);
+    drawRow(RowY[1], "Operator", operatorLinkText(), operatorLinkColor());
 
 #ifdef USE_WIFI
     const char* wifi_value = wifi_is_connected() ? wifi_local_ip() : "Offline";
-    drawRow(RowY[2], "Wi-Fi diagnostics", wifi_value, wifi_is_connected() ? GREEN : LIGHTGREY);
+    drawRow(RowY[2], "Wi-Fi", wifi_value, wifi_is_connected() ? GREEN : LIGHTGREY);
 #else
-    drawRow(RowY[2], "Wi-Fi diagnostics", "Unavailable", DARKGREY);
+    drawRow(RowY[2], "Wi-Fi", "Unavailable", DARKGREY);
 #endif
 
     const char* capability = "Not installed";
@@ -238,7 +242,7 @@ void MachineHealthScene::drawConnections() {
         capability = "Threading ready";
         capability_color = GREEN;
     }
-    drawRow(RowY[3], "Spindle sync", capability, capability_color);
+    drawRow(RowY[3], "Spindle", capability, capability_color);
 }
 
 void MachineHealthScene::reDisplay() {

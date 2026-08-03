@@ -61,8 +61,8 @@ private:
 
     void draw_state_pill(state_t shown_state) {
         int color = stateColor(shown_state);
-        drawOutlinedRect(75, 27, 90, 21, BLACK, color);
-        centered_text(stateName(shown_state), 40, color, TINY);
+        drawOutlinedRect(75, 13, 90, 23, BLACK, color);
+        centered_text(stateName(shown_state), 27, color, TINY);
     }
 
     void draw_status_buttons() {
@@ -78,11 +78,10 @@ private:
         int shown_alarm = displayAlarm();
 
         background();
-        centered_text("Lathe Status", 14, WHITE, SMALL);
-        text(inInches ? "in" : "mm", 186, 15, DARKGREY, TINY, middle_left);
         draw_state_pill(shown_state);
+        text(inInches ? "in" : "mm", 187, 27, DARKGREY, TINY, middle_left);
 
-        DRO dro(23, 56, 194, 35);
+        DRO dro(23, 48, 194, 35);
         for (int axis = 0; axis < profile_axis_count(); ++axis) {
             char axis_char = profile_axis_char(axis);
             if (axis_char == 'X' || axis_char == 'Z') {
@@ -90,23 +89,24 @@ private:
             }
         }
 
-        drawOutlinedRect(30, 137, 180, 30, NAVY, DARKGREY);
+        drawOutlinedRect(30, 130, 180, 30, NAVY, DARKGREY);
         char tool[12];
         if (lathe.active_tool > 0) {
             snprintf(tool, sizeof(tool), "T%d", lathe.active_tool);
         } else {
             snprintf(tool, sizeof(tool), "T-");
         }
-        text("Tool", 40, 154, DARKGREY, TINY, middle_left);
-        text(tool, 75, 154, lathe.active_tool == 5 ? ORANGE : WHITE, SMALL, middle_left);
-        text("Spindle", 118, 154, DARKGREY, TINY, middle_left);
         char spindle[24];
         if (lathe.effective_rpm > 0.5f) {
-            snprintf(spindle, sizeof(spindle), "%.0f RPM", lathe.effective_rpm);
+            snprintf(spindle, sizeof(spindle), "Spindle %.0f", lathe.effective_rpm);
         } else {
-            snprintf(spindle, sizeof(spindle), "STOP");
+            snprintf(spindle, sizeof(spindle), "Spindle STOP");
         }
-        text(spindle, 201, 154, lathe.effective_rpm > 0.5f ? GREEN : LIGHTGREY, TINY, middle_right);
+        char summary[40];
+        snprintf(summary, sizeof(summary), "%s / %s", tool, spindle);
+        auto_text(std::string(summary), 120, 147, 164,
+                  lathe.effective_rpm > 0.5f ? GREEN : lathe.active_tool == 5 ? ORANGE : LIGHTGREY,
+                  TINY, middle_center);
 
         const char* context = nullptr;
         int context_color = LIGHTGREY;
@@ -124,15 +124,15 @@ private:
             context = context_buffer;
             context_color = RED;
         } else if (shown_state == Disconnected) {
-            context = "Controller link unavailable";
+            context = "Controller N/C";
             context_color = RED;
         } else if (!_diagnostic_state && lathe_command_recoverable()) {
             context = lathe_command_status_text();
             context_color = YELLOW;
         }
         if (context) {
-            drawOutlinedRect(30, 174, 180, 25, BLACK, context_color);
-            auto_text(std::string(context), 120, 188, 166, context_color, TINY, middle_center);
+            drawOutlinedRect(30, 166, 180, 28, BLACK, context_color);
+            auto_text(std::string(context), 120, 182, 172, context_color, TINY, middle_center);
         }
 
         draw_status_buttons();

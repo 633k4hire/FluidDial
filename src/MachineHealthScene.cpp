@@ -130,6 +130,12 @@ void MachineHealthScene::drawRow(int y, const char* label, const char* value, in
               middle_right);
 }
 
+static void drawFullRow(int y, const char* value, int value_color) {
+    drawOutlinedRect(RowX, y, RowW, RowH, NAVY, DARKGREY);
+    auto_text(std::string(value ? value : ""), 120, y + RowH / 2 + 2, RowW - 18,
+              value_color, TINY, middle_center);
+}
+
 void MachineHealthScene::drawOverview() {
     drawHeader("Overview", state == Alarm ? RED : state == Idle ? GREEN : YELLOW);
     drawRow(RowY[0], "Link", fnc_is_connected() ? "Online" : "N/C", fnc_is_connected() ? GREEN : RED);
@@ -160,14 +166,14 @@ void MachineHealthScene::drawAlarm() {
         drawRow(RowY[0], "State", "No alarms", GREEN);
         drawRow(RowY[1], "Alarm", "None", LIGHTGREY);
         drawRow(RowY[2], "Error", "None", LIGHTGREY);
-        drawRow(RowY[3], "Action", "Ready", GREEN);
+        drawRow(RowY[3], "Do", "Ready", GREEN);
         return;
     }
 
     char alarm_code[20];
     snprintf(alarm_code, sizeof(alarm_code), active_alarm ? "Alarm %d" : "None", shown_alarm);
     drawRow(RowY[0], "State", alarm_code, active_alarm ? RED : LIGHTGREY);
-    drawRow(RowY[1], "Cause", active_alarm ? alarm_name_short[shown_alarm] : "None", active_alarm ? YELLOW : LIGHTGREY);
+    drawRow(RowY[1], "Why", active_alarm ? alarm_name_short[shown_alarm] : "None", active_alarm ? YELLOW : LIGHTGREY);
     drawRow(RowY[2], "Error", errorActive() ? decode_error_number(lastError) : "None", errorActive() ? YELLOW : LIGHTGREY);
 
     const char* guidance = "Reset required";
@@ -176,7 +182,7 @@ void MachineHealthScene::drawAlarm() {
     } else if (shown_alarm == 4 || shown_alarm == 5) {
         guidance = "Check probe input";
     }
-    drawRow(RowY[3], "Action", guidance, YELLOW);
+    drawRow(RowY[3], "Do", guidance, YELLOW);
 }
 
 void MachineHealthScene::drawReadiness() {
@@ -210,21 +216,27 @@ void MachineHealthScene::drawReadiness() {
         action = "Synchronizing";
         action_color = YELLOW;
     }
-    drawRow(RowY[3], "Action", action, action_color);
+    drawRow(RowY[3], "Act", action, action_color);
 }
 
 void MachineHealthScene::drawConnections() {
     const LatheStatus& lathe = lathe_status();
     bool fixture_fault = _preview == Preview::EncoderFault;
     drawHeader("Connections", fixture_fault || lathe.feedback_fault ? RED : GREEN);
-    drawRow(RowY[0], "UART", fnc_is_connected() ? "Online" : "N/C", fnc_is_connected() ? GREEN : RED);
-    drawRow(RowY[1], "Sync", operatorLinkText(), operatorLinkColor());
+    char uart_line[28];
+    snprintf(uart_line, sizeof(uart_line), "UART / %s", fnc_is_connected() ? "Online" : "N/C");
+    drawFullRow(RowY[0], uart_line, fnc_is_connected() ? GREEN : RED);
+    char sync_line[40];
+    snprintf(sync_line, sizeof(sync_line), "Sync / %s", operatorLinkText());
+    drawFullRow(RowY[1], sync_line, operatorLinkColor());
 
 #ifdef USE_WIFI
     const char* wifi_value = wifi_is_connected() ? wifi_local_ip() : "Offline";
-    drawRow(RowY[2], "Wi-Fi", wifi_value, wifi_is_connected() ? GREEN : LIGHTGREY);
+    char wifi_line[32];
+    snprintf(wifi_line, sizeof(wifi_line), wifi_is_connected() ? "IP %s" : "Wi-Fi / %s", wifi_value);
+    drawFullRow(RowY[2], wifi_line, wifi_is_connected() ? GREEN : LIGHTGREY);
 #else
-    drawRow(RowY[2], "Wi-Fi", "Unavailable", DARKGREY);
+    drawFullRow(RowY[2], "Wi-Fi / Unavailable", DARKGREY);
 #endif
 
     const char* capability = "Not installed";
@@ -242,7 +254,9 @@ void MachineHealthScene::drawConnections() {
         capability = "Threading ready";
         capability_color = GREEN;
     }
-    drawRow(RowY[3], "Encoder", capability, capability_color);
+    char encoder_line[40];
+    snprintf(encoder_line, sizeof(encoder_line), "ENC / %s", capability);
+    drawFullRow(RowY[3], encoder_line, capability_color);
 }
 
 void MachineHealthScene::reDisplay() {

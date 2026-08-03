@@ -152,7 +152,7 @@ void AboutScene::reDisplay() {
             centered_text(version.c_str(), 73, WHITE, TINY);
             centered_text(build.c_str(), 91, DARKGREY, TINY);
 
-            drawAboutLine(108, fnc_is_connected() ? "FNC UART1M / Online" : "FNC UART1M / N/C", fnc_is_connected() ? GREEN : RED);
+            drawAboutLine(108, fnc_is_connected() ? "UART 1M / Online" : "UART 1M / N/C", fnc_is_connected() ? GREEN : RED);
 #ifdef USE_WIFI
             std::string wifi = wifi_is_connected() ? std::string("IP ") + wifi_local_ip() : "Wi-Fi Offline";
             drawAboutLine(139, wifi.c_str(), wifi_is_connected() ? GREEN : LIGHTGREY);

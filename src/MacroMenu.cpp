@@ -5,6 +5,7 @@
 #include "MacroItem.h"
 #include "polar.h"
 #include "FileParser.h"
+#include "LatheUi.h"
 
 extern Scene statusScene;
 extern Scene filePreviewScene;
@@ -64,9 +65,15 @@ class MacroMenu : public Menu {
 private:
     bool        _reading = true;
     std::string _error_string;
+    int         _diagnostic_fixture = -1;
 
 public:
     MacroMenu() : Menu("Macros") {}
+
+    void diagnosticPreview(int fixture) {
+        _diagnostic_fixture = fixture;
+        reDisplay();
+    }
 
     const std::string& selected_name() { return _items[_selected]->name(); }
 
@@ -94,6 +101,7 @@ public:
     }
 
     void onEntry(void* arg) override {
+        _diagnostic_fixture = -1;
         if (num_items() == 0) {
             refreshMacros();
         }
@@ -117,6 +125,38 @@ public:
     void onTouchClick() { onGreenButtonPress(); }
 
     void reDisplay() override {
+        if (lathe_ui_enabled()) {
+            lathe_ui_detail_surface("MACROS");
+            bool fixture_loading = _diagnostic_fixture == 1;
+            bool fixture_empty = _diagnostic_fixture == 2;
+            bool fixture_error = _diagnostic_fixture == 3;
+            if (fixture_loading || fixture_empty || fixture_error || num_items() == 0) {
+                if (fixture_error || _error_string.length()) {
+                    lathe_ui_fit_text(fixture_error ? "MACRO LOAD ERROR" : _error_string.c_str(), 120, 114, 170, RED, SMALL, middle_center);
+                } else {
+                    bool loading = fixture_loading || (_diagnostic_fixture < 0 && _reading);
+                    centered_text(loading ? "LOADING MACROS" : "NO MACROS", 110,
+                                  loading ? lathe_ui_amber() : lathe_ui_muted(), SMALL);
+                    if (!loading) centered_text("ADD FILES TO SD", 143, lathe_ui_muted(), TINY);
+                }
+            } else {
+                int first = _selected - 2;
+                int last = _selected + 2;
+                for (int index = first; index <= last; ++index) {
+                    if (index < 0 || index >= num_items()) continue;
+                    int y = 76 + (index - first) * 29;
+                    bool selected = index == _selected;
+                    if (selected) canvas.drawRoundRect(26, y - 13, 188, 26, 7, lathe_ui_blue());
+                    lathe_ui_fit_text(_items[index]->name().c_str(), 38, y, 164, selected ? lathe_ui_text() : lathe_ui_muted());
+                }
+                char position[24];
+                snprintf(position, sizeof(position), "%d / %d", _selected + 1, num_items());
+                centered_text(position, 207, lathe_ui_muted(), TINY);
+            }
+            buttonLegends();
+            refreshDisplay();
+            return;
+        }
         menuBackground();
         if (num_items() == 0) {
             // Point where { 0, 0 };
@@ -211,3 +251,7 @@ public:
         text("Macros", { 0, 100 }, YELLOW, SMALL);
     }
 } macroMenu;
+
+void diagnostic_preview_macros(int fixture) {
+    static_cast<MacroMenu&>(macroMenu).diagnosticPreview(fixture);
+}

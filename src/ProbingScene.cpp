@@ -5,12 +5,14 @@
 #include "Scene.h"
 #include "e4math.h"
 #include "LatheModel.h"
+#include "LatheUi.h"
 #include "MachineProfile.h"
 
 class ProbingScene : public Scene {
 private:
     int  selection   = 0;
     long oldPosition = 0;
+    int  _diagnostic_fixture = -1;
 
     // Saved to NVS
     e4_t _offset  = e4_from_int(0);
@@ -21,11 +23,93 @@ private:
 
     const char* axis_pref_name() { return machine_profile_is_lathe() ? "LatheAxis" : "Axis"; }
 
+    const char* probe_value(int field) const {
+        switch (field) {
+            case 0: return e4_to_cstr(_offset, 2);
+            case 1: return intToCStr(_travel);
+            case 2: return intToCStr(_rate);
+            case 3: return intToCStr(_retract);
+            case 4: return profile_axis_cstr(_axis);
+        }
+        return "";
+    }
+
+    void draw_lathe_probe() {
+        lathe_ui_detail_surface("PROBE");
+        lathe_ui_badge(151, 44, 72, myProbeSwitch ? "CONTACT" : "OPEN", myProbeSwitch ? lathe_ui_coral() : lathe_ui_green());
+
+        const char* green_label = "";
+        const char* red_label = "";
+        ProbeResult result = last_probe_result();
+        if (_diagnostic_fixture == 2 || _diagnostic_fixture == 3) {
+            result.known = true;
+            result.success = _diagnostic_fixture == 2;
+            result.axis_count = 3;
+            result.axes_mm[0] = 12.345f;
+            result.axes_mm[2] = -4.250f;
+        }
+        bool moving = _diagnostic_fixture == 1 || state == Cycle || state == Hold || state == DoorClosed;
+        if (_diagnostic_fixture >= 2) {
+            centered_text(result.success ? "LAST PROBE / SUCCESS" : "LAST PROBE / FAILED", 76,
+                          result.success ? lathe_ui_green() : RED, TINY);
+            for (int axis = 0; axis < 2; ++axis) {
+                int machine_axis = profile_machine_axis(axis);
+                pos_t value = machine_axis >= 0 && machine_axis < result.axis_count ? fromMm(result.axes_mm[machine_axis]) : 0;
+                lathe_ui_dro_row(111 + axis * 42, profile_axis_char(axis), value, axis == _axis);
+            }
+        } else if (state == Idle) {
+            const char* labels[5] = { "OFFSET", "TRAVEL", "FEED", "RETRACT", "AXIS" };
+            for (int i = 0; i < 5; ++i) {
+                int y = 74 + i * 25;
+                if (selection == i) canvas.drawRoundRect(25, y - 11, 188, 22, 6, lathe_ui_blue());
+                text(labels[i], 34, y, selection == i ? lathe_ui_blue() : lathe_ui_muted(), TINY, middle_left);
+                text(probe_value(i), 203, y, lathe_ui_text(), SMALL_MONO, middle_right);
+            }
+            if (result.known) {
+                text(result.success ? "LAST PROBE OK" : "LAST PROBE FAILED", 120, 202,
+                     result.success ? lathe_ui_green() : RED, TINY, middle_center);
+            }
+            green_label = "Probe";
+            red_label = "Retract";
+        } else if (moving) {
+            text("LIVE POSITION", 30, 70, lathe_ui_blue(), TINY, middle_left);
+            for (int axis = 0; axis < 2; ++axis) {
+                int machine_axis = profile_machine_axis(axis);
+                pos_t value = machine_axis >= 0 && machine_axis < 6 ? myAxes[machine_axis] : 0;
+                lathe_ui_dro_row(104 + axis * 42, profile_axis_char(axis), value, axis == _axis);
+            }
+            if (result.known) {
+                text(result.success ? "CONTACT CAPTURED" : "NO CONTACT", 120, 190,
+                     result.success ? lathe_ui_coral() : lathe_ui_amber(), TINY, middle_center);
+            }
+            if (state == Cycle) {
+                red_label = "E-Stop";
+                green_label = "Hold";
+            } else {
+                red_label = "Reset";
+                green_label = "Resume";
+            }
+        } else {
+            centered_text("PROBE UNAVAILABLE", 112, lathe_ui_amber(), SMALL);
+            red_label = "Reset";
+            green_label = state == Alarm ? "Unlock" : "";
+        }
+        drawButtonLegends(red_label, green_label, "Back");
+        drawError();
+        refreshDisplay();
+    }
+
 public:
     ProbingScene() : Scene("Probe") {}
 
     void diagnosticPreview(int item) {
+        _diagnostic_fixture = -1;
         selection = item;
+        reDisplay();
+    }
+
+    void diagnosticState(int fixture) {
+        _diagnostic_fixture = fixture;
         reDisplay();
     }
 
@@ -106,6 +190,7 @@ public:
         }
     }
     void onEntry(void* arg) override {
+        _diagnostic_fixture = -1;
         _axis = machine_profile_is_lathe() ? 1 : 2;
         if (lathe_mode_active()) {
             request_lathe_status();
@@ -124,6 +209,10 @@ public:
     }
 
     void reDisplay() {
+        if (lathe_ui_enabled()) {
+            draw_lathe_probe();
+            return;
+        }
         background();
         drawMenuTitle(current_scene->name());
         drawStatus();
@@ -194,4 +283,8 @@ ProbingScene probingScene;
 
 void diagnostic_preview_probe(int selection) {
     probingScene.diagnosticPreview(selection);
+}
+
+void diagnostic_preview_probe_state(int fixture) {
+    probingScene.diagnosticState(fixture);
 }

@@ -11,6 +11,7 @@ const GFXfont* font[] = {
     &fonts::FreeSansBold18pt7b,  // MEDIUM
     &fonts::FreeSansBold24pt7b,  // LARGE
     &fonts::FreeMonoBold18pt7b,  // MEDIUM_MONO
+    &fonts::FreeMonoBold12pt7b,  // SMALL_MONO
 };
 
 void text(const char* msg, int x, int y, int color, fontnum_t fontnum, int datum) {

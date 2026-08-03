@@ -17,12 +17,16 @@ extern Scene wmbFileSelectScene;
 extern Scene fileSelectScene;
 #endif
 extern Scene aboutScene;
+extern Scene machineHealthScene;
 
 void diagnostic_preview_main_menu(int selection);
 void diagnostic_preview_homing(int selection);
 void diagnostic_preview_jog(int selection);
 void diagnostic_preview_probe(int selection);
 void diagnostic_preview_tools(int selection);
+void diagnostic_preview_about(int page);
+void diagnostic_preview_machine_health(int selection);
+void diagnostic_preview_status(int fixture);
 
 #ifdef USE_WIFI
 extern Scene wifiSetupScene;
@@ -62,6 +66,17 @@ namespace {
         { "main-macros", &menuScene, diagnostic_preview_main_menu, 6 },
         { "main-about", &menuScene, diagnostic_preview_main_menu, 7 },
         { "status", &statusScene, nullptr, 0 },
+        { "status-idle", &statusScene, diagnostic_preview_status, 0 },
+        { "status-cycle", &statusScene, diagnostic_preview_status, 1 },
+        { "status-hold", &statusScene, diagnostic_preview_status, 2 },
+        { "status-alarm", &statusScene, diagnostic_preview_status, 3 },
+        { "status-disconnected", &statusScene, diagnostic_preview_status, 4 },
+        { "health-overview", &machineHealthScene, diagnostic_preview_machine_health, 0 },
+        { "health-alarm", &machineHealthScene, diagnostic_preview_machine_health, 1 },
+        { "health-readiness", &machineHealthScene, diagnostic_preview_machine_health, 2 },
+        { "health-connections", &machineHealthScene, diagnostic_preview_machine_health, 3 },
+        { "health-alarm-preview", &machineHealthScene, diagnostic_preview_machine_health, 4 },
+        { "health-encoder-fault", &machineHealthScene, diagnostic_preview_machine_health, 5 },
         { "home-all", &homingScene, diagnostic_preview_homing, 0 },
         { "home-x", &homingScene, diagnostic_preview_homing, 1 },
         { "home-z", &homingScene, diagnostic_preview_homing, 2 },
@@ -83,6 +98,8 @@ namespace {
 #endif
         { "macros", &macroMenu, nullptr, 0 },
         { "about", &aboutScene, nullptr, 0 },
+        { "about-device", &aboutScene, diagnostic_preview_about, 0 },
+        { "about-controls", &aboutScene, diagnostic_preview_about, 1 },
 #ifdef USE_WIFI
         { "connection", &wifiSetupScene, nullptr, 0 },
         { "system-restart", &systemScene, diagnostic_preview_system, 0 },

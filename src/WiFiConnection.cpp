@@ -1545,6 +1545,16 @@ bool wifi_is_connected() {
     return WiFi.status() == WL_CONNECTED;
 }
 
+const char* wifi_local_ip() {
+    static char address[40] = {};
+    if (!wifi_is_connected()) {
+        address[0] = '\0';
+        return address;
+    }
+    WiFi.localIP().toString().toCharArray(address, sizeof(address));
+    return address;
+}
+
 bool websocket_is_connected() {
     return _ws_connected;
 }

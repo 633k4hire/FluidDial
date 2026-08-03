@@ -431,6 +431,11 @@ def assert_maijker_build_contract() -> None:
 
     menu = (root / "src" / "MenuScene.cpp").read_text(encoding="utf-8")
     lathe = (root / "src" / "LatheModel.cpp").read_text(encoding="utf-8")
+    about = (root / "src" / "AboutScene.cpp").read_text(encoding="utf-8")
+    status = (root / "src" / "StatusScene.cpp").read_text(encoding="utf-8")
+    health = (root / "src" / "MachineHealthScene.cpp").read_text(encoding="utf-8")
+    actions = (root / "src" / "MachineStateActions.cpp").read_text(encoding="utf-8")
+    diagnostic_screens = (root / "src" / "DiagnosticScreens.cpp").read_text(encoding="utf-8")
     assert "void reDisplay() override" in menu
     assert "syncIconAvailability();" in menu
     assert "operator_basic_motion_actions_available()" in menu
@@ -439,6 +444,29 @@ def assert_maijker_build_contract() -> None:
     assert "void lathe_poll_status()" in lathe
     assert "request_lathe_status(true);" in lathe
     assert "json_reset_depth();" in lathe
+
+    # The round display has separate operator, health, and device-information
+    # surfaces. Safety actions remain centralized so labels and behavior agree.
+    assert "push_scene(&machineHealthScene)" in menu
+    assert 'drawButtonLegends("Back", "Settings", "Next")' in about
+    assert 'centered_text("Lathe Status"' in status
+    lathe_dashboard = status.split("void draw_lathe_dashboard()", 1)[1].split("public:", 1)[0]
+    assert "axis_char == 'X' || axis_char == 'Z'" in lathe_dashboard
+    assert "Thread unsafe" not in status
+    assert "ENC OFF" not in status
+    for page in ("drawOverview", "drawAlarm", "drawReadiness", "drawConnections"):
+        assert page in health
+    assert "machine_state_red_action" in status and "machine_state_red_action" in health
+    assert 'send_line("$H")' in actions
+    for screen_id in (
+        "about-device",
+        "about-controls",
+        "health-overview",
+        "health-alarm-preview",
+        "health-encoder-fault",
+        "status-disconnected",
+    ):
+        assert f'"{screen_id}"' in diagnostic_screens
 
     # The 1 Mbps link must be able to absorb a complete multi-line ESP421
     # response without a sticky parser failure after homing.

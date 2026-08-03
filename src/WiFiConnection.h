@@ -28,6 +28,7 @@ void wifi_init(bool auto_ap = true);
 void wifi_poll();
 
 bool wifi_is_connected();       // ESP32 STA joined the network
+const char* wifi_local_ip();    // M5Dial station address, or an empty string
 bool websocket_is_connected();  // WebSocket connection to FluidNC is up
 
 // Force-close the WebSocket so it can reconnect cleanly.

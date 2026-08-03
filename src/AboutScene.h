@@ -3,6 +3,7 @@
 class AboutScene : public Scene {
 private:
     int _brightness = 255;
+    int _round_page = 0;
 
 public:
     AboutScene() : Scene("About", 4) {}
@@ -19,4 +20,5 @@ public:
     void onStateChange(state_t old_state);
     void reDisplay();
     int  getBrightness();
+    void diagnosticPreview(int page);
 };

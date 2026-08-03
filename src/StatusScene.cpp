@@ -2,269 +2,212 @@
 // Use of this source code is governed by a GPLv3 license that can be found in the LICENSE file.
 
 #include "Scene.h"
-#include "ConfirmScene.h"
 #include "LatheModel.h"
 #include "MachineProfile.h"
+#include "MachineStateActions.h"
+#include "alarm.h"
+
+#include <cstdio>
+#include <string>
 
 extern Scene menuScene;
 
 class StatusScene : public Scene {
 private:
-    uint32_t    _last_lathe_refresh_ms = 0;
+    uint32_t _last_lathe_refresh_ms = 0;
+    bool     _diagnostic_state = false;
+    state_t  _preview_state = Idle;
+    int      _preview_alarm = 0;
 
-    // the fro/sro/rt rotating display state
-    typedef enum {
+    enum ovrd_display_t {
         FRO,
         SRO,
         RT_FEED_SPEED,
-    } ovrd_display_t;
+    };
 
     ovrd_display_t overd_display = FRO;
 
-    void draw_info_row(int y, const char* left, const char* right, int right_color = WHITE, int left_color = DARKGREY) {
-        text(left, 24, y, left_color, TINY, middle_left);
-        text(right, display_short_side() - 24, y, right_color, TINY, middle_right);
+    state_t displayState() const { return _diagnostic_state ? _preview_state : state; }
+    int displayAlarm() const { return _diagnostic_state ? _preview_alarm : lastAlarm; }
+
+    const char* stateName(state_t shown_state) const {
+        if (!_diagnostic_state && shown_state == state) {
+            return my_state_string;
+        }
+        switch (shown_state) {
+            case Idle: return "Idle";
+            case Alarm: return "Alarm";
+            case CheckMode: return "Check";
+            case Homing: return "Homing";
+            case Cycle: return "Cycle";
+            case Hold: return "Hold";
+            case Jog: return "Jog";
+            case DoorOpen: return "Door open";
+            case DoorClosed: return "Door";
+            case GrblSleep: return "Sleep";
+            case ConfigAlarm: return "Config alarm";
+            case Critical: return "Critical";
+            case Disconnected: return "N/C";
+        }
+        return "Unknown";
+    }
+
+    int stateColor(state_t shown_state) const {
+        if (shown_state == Alarm || shown_state == Critical || shown_state == ConfigAlarm || shown_state == Disconnected) {
+            return RED;
+        }
+        return shown_state == Idle ? GREEN : YELLOW;
+    }
+
+    void draw_state_pill(state_t shown_state) {
+        int color = stateColor(shown_state);
+        drawOutlinedRect(75, 27, 90, 21, BLACK, color);
+        centered_text(stateName(shown_state), 40, color, TINY);
     }
 
     void draw_status_buttons() {
-        const char* grnLabel    = "";
-        const char* redLabel    = "";
-        const char* yellowLabel = "Back";
-
-        switch (state) {
-            case Alarm:
-                if (alarm_is_critical()) {
-                    redLabel = "Reset";
-                } else {
-                    redLabel = "Unlock";
-                }
-                if (alarm_is_homing()) {
-                    grnLabel = "Home All";
-                }
-                break;
-            case Homing:
-                redLabel = "Reset";
-                break;
-            case Cycle:
-                redLabel    = "E-Stop";
-                grnLabel    = "Hold";
-                yellowLabel = "Rst Ovr";
-                break;
-            case Hold:
-            case DoorClosed:
-                redLabel    = "Quit";
-                grnLabel    = "Resume";
-                yellowLabel = "Rst Ovr";
-                break;
-            case Jog:
-                redLabel = "Jog Cancel";
-                break;
-            case Idle:
-                break;
-        }
-        drawButtonLegends(redLabel, grnLabel, yellowLabel);
+        state_t shown_state = displayState();
+        MachineStateActionLabels labels = machine_state_action_labels(shown_state, displayAlarm(), machine_profile_is_lathe());
+        const char* center = (shown_state == Cycle || shown_state == Hold || shown_state == DoorClosed) ? "Rst Ovr" : "Back";
+        drawButtonLegends(labels.red, labels.green, center);
     }
 
     void draw_lathe_dashboard() {
         const LatheStatus& lathe = lathe_status();
+        state_t shown_state = displayState();
+        int shown_alarm = displayAlarm();
 
         background();
-        drawMenuTitle("Lathe");
-        drawStatusTiny(24);
+        centered_text("Lathe Status", 14, WHITE, SMALL);
+        text(inInches ? "in" : "mm", 186, 15, DARKGREY, TINY, middle_left);
+        draw_state_pill(shown_state);
 
-        DRO dro(16, 50, 210, 27);
+        DRO dro(23, 56, 194, 35);
         for (int axis = 0; axis < profile_axis_count(); ++axis) {
-            dro.draw(axis, -1, true);
+            char axis_char = profile_axis_char(axis);
+            if (axis_char == 'X' || axis_char == 'Z') {
+                dro.draw(axis, -1, true);
+            }
         }
 
-        char tool[32];
+        drawOutlinedRect(30, 137, 180, 30, NAVY, DARKGREY);
+        char tool[12];
         if (lathe.active_tool > 0) {
-            snprintf(tool, sizeof(tool), "T%d%s", lathe.active_tool, lathe.active_tool == 5 ? " Probe" : "");
+            snprintf(tool, sizeof(tool), "T%d", lathe.active_tool);
         } else {
-            snprintf(tool, sizeof(tool), "None");
+            snprintf(tool, sizeof(tool), "T-");
         }
-
-        char rpm[48];
-        if (lathe.feedback_rpm_known) {
-            snprintf(rpm, sizeof(rpm), "Eff %.0f  Meas %.0f", lathe.effective_rpm, lathe.feedback_rpm);
+        text("Tool", 40, 154, DARKGREY, TINY, middle_left);
+        text(tool, 75, 154, lathe.active_tool == 5 ? ORANGE : WHITE, SMALL, middle_left);
+        text("Spindle", 118, 154, DARKGREY, TINY, middle_left);
+        char spindle[24];
+        if (lathe.effective_rpm > 0.5f) {
+            snprintf(spindle, sizeof(spindle), "%.0f RPM", lathe.effective_rpm);
         } else {
-            snprintf(rpm, sizeof(rpm), "Eff %.0f  Meas N/A", lathe.effective_rpm);
+            snprintf(spindle, sizeof(spindle), "STOP");
         }
+        text(spindle, 201, 154, lathe.effective_rpm > 0.5f ? GREEN : LIGHTGREY, TINY, middle_right);
 
-        char modes[48];
-        snprintf(modes, sizeof(modes), "%s  %s",
-                 lathe.spindle_speed_mode.empty() ? "G97" : lathe.spindle_speed_mode.c_str(),
-                 lathe.feed_mode.empty() ? "G94" : lathe.feed_mode.c_str());
-
-        const char* encoder_text  = "ENC OK";
-        int         encoder_color = GREEN;
-        if (!lathe.encoder_enabled) {
-            encoder_text  = "ENC OFF";
-            encoder_color = YELLOW;
-        } else if (lathe.feedback_fault) {
-            encoder_text  = "ENC FAULT";
-            encoder_color = RED;
-        } else if (lathe.feedback_stale) {
-            encoder_text  = "ENC STALE";
-            encoder_color = YELLOW;
-        } else if (!lathe.encoder_capture) {
-            encoder_text  = "ENC NO CAP";
-            encoder_color = YELLOW;
+        const char* context = nullptr;
+        int context_color = LIGHTGREY;
+        char context_buffer[64];
+        if (shown_state == Cycle || shown_state == Hold || shown_state == DoorClosed) {
+            switch (overd_display) {
+                case FRO: snprintf(context_buffer, sizeof(context_buffer), "Feed override %d%%", myFro); break;
+                case SRO: snprintf(context_buffer, sizeof(context_buffer), "Spindle override %d%%", mySro); break;
+                case RT_FEED_SPEED: snprintf(context_buffer, sizeof(context_buffer), "Feed %u / Speed %u", myFeed, mySpeed); break;
+            }
+            context = context_buffer;
+            context_color = GREEN;
+        } else if (shown_state == Alarm) {
+            snprintf(context_buffer, sizeof(context_buffer), "Alarm %d: %s", shown_alarm, alarm_name_short[shown_alarm]);
+            context = context_buffer;
+            context_color = RED;
+        } else if (shown_state == Disconnected) {
+            context = "Controller link unavailable";
+            context_color = RED;
+        } else if (!_diagnostic_state && lathe_command_recoverable()) {
+            context = lathe_command_status_text();
+            context_color = YELLOW;
         }
-
-        bool threading_feedback_safe = lathe.encoder_enabled && lathe.encoder_capture && !lathe.feedback_stale && !lathe.feedback_fault;
-        int  safety_color            = (lathe.feedback_fault || lathe.feedback_stale) ? RED : YELLOW;
-
-        if (!threading_feedback_safe) {
-            drawOutlinedRect(18, 185, display_short_side() - 36, 24, BLACK, safety_color);
+        if (context) {
+            drawOutlinedRect(30, 174, 180, 25, BLACK, context_color);
+            auto_text(std::string(context), 120, 188, 166, context_color, TINY, middle_center);
         }
-        draw_info_row(142, "Tool", tool, lathe.active_tool == 5 ? ORANGE : WHITE);
-        draw_info_row(160, "RPM", rpm);
-        draw_info_row(178, "Modes", modes, GREEN);
-        draw_info_row(196,
-                      threading_feedback_safe ? (lathe.diameter_mode ? "G7 Diameter" : "G8 Radius") : "Thread unsafe",
-                      encoder_text,
-                      encoder_color,
-                      threading_feedback_safe ? DARKGREY : safety_color);
 
         draw_status_buttons();
-
-#ifdef USE_WIFI
-        if (round_display) {
-            drawWiFiSignalBars(70, 20);
-        }
-#endif
         refreshDisplay();
     }
 
 public:
     StatusScene() : Scene("Status") {}
 
-    void onExit() override {}
-
     void onEntry(void* arg) override {
-        // Returned from ConfirmScene — execute the deferred soft reset.
-        if (arg && strcmp((const char*)arg, "Confirmed") == 0) {
-            dbg_printf("StatusScene: sending Ctrl-X soft reset\r\n");
-            fnc_realtime(Reset);
-            schedule_action([]() { send_line("$X"); });
-        } else {
+        _diagnostic_state = false;
+        if (!machine_state_handle_confirmation(arg)) {
             dbg_printf("StatusScene: onEntry arg=%s\r\n", arg ? (const char*)arg : "null");
         }
         request_lathe_status();
     }
 
-    void onDialButtonPress() {
+    void onDialButtonPress() override {
         if (state == Cycle || state == Hold) {
-            if (overd_display == FRO)
+            if (overd_display == FRO) {
                 fnc_realtime(FeedOvrReset);
-            else if (overd_display == SRO)
+            } else if (overd_display == SRO) {
                 fnc_realtime(SpindleOvrReset);
+            }
         } else {
             pop_scene();
         }
     }
 
-    void onStateChange(state_t old_state) {
+    void onStateChange(state_t old_state) override {
         if (old_state == Cycle && state == Idle && parent_scene() != &menuScene) {
             pop_scene();
+            return;
         }
+        request_redisplay();
     }
 
-    void onTouchClick() {
+    void onTouchClick() override {
         if (touchY > 150 && (state == Cycle || state == Hold)) {
             switch (overd_display) {
-                case FRO:
-                    overd_display = SRO;
-                    break;
-                case SRO:
-                    overd_display = RT_FEED_SPEED;
-                    break;
-                case RT_FEED_SPEED:
-                    overd_display = FRO;
+                case FRO: overd_display = SRO; break;
+                case SRO: overd_display = RT_FEED_SPEED; break;
+                case RT_FEED_SPEED: overd_display = FRO; break;
             }
             reDisplay();
         }
-        fnc_realtime(StatusReport);  // sometimes you want an extra status
+        fnc_realtime(StatusReport);
         request_lathe_status();
     }
 
-    void onRedButtonPress() {
-        switch (state) {
-            case Alarm:
-                if (alarm_is_critical()) {
-                    // Soft reset loses work offsets — ask the user to confirm first.
-                    push_scene(&confirmScene, (void*)"Soft Reset?\nOffsets will be lost");
-                } else {
-                    // Non-critical alarm that can be soft-cleared
-                    send_line("$X");
-                }
+    void onRedButtonPress() override { machine_state_red_action(); }
+    void onGreenButtonPress() override { machine_state_green_action(); }
+
+    void onEncoder(int delta) override {
+        if (state != Cycle) {
+            return;
+        }
+        switch (overd_display) {
+            case FRO:
+                if (delta > 0 && myFro < 200) fnc_realtime(FeedOvrFinePlus);
+                else if (delta < 0 && myFro > 10) fnc_realtime(FeedOvrFineMinus);
                 break;
-            case Cycle:
-            case Homing:
-            case Hold:
-            case DoorClosed:
-                fnc_realtime(Reset);
+            case SRO:
+                if (delta > 0 && mySro < 200) fnc_realtime(SpindleOvrFinePlus);
+                else if (delta < 0 && mySro > 10) fnc_realtime(SpindleOvrFineMinus);
+                break;
+            case RT_FEED_SPEED:
+                overd_display = FRO;
                 break;
         }
+        reDisplay();
     }
 
-    bool alarm_is_homing() { return lastAlarm == 14 || (lastAlarm >= 6 && lastAlarm <= 9); }
-    bool alarm_is_critical() {
-        switch (lastAlarm) {
-            case 4: case 5:                  // Probe fail
-            case 6: case 7: case 8: case 9: // Homing fail
-            case 14:                         // Unhomed
-                return false;
-            default:
-                return true;
-        }
-    }
-    void onGreenButtonPress() {
-        switch (state) {
-            case Cycle:
-                fnc_realtime(FeedHold);
-                break;
-            case Hold:
-            case DoorClosed:
-                fnc_realtime(CycleStart);
-                break;
-            case Alarm:
-                if (alarm_is_homing()) {
-                    send_line("$H");
-                }
-                break;
-        }
-        fnc_realtime(StatusReport);
-    }
-
-    void onEncoder(int delta) {
-        if (state == Cycle) {
-            switch (overd_display) {
-                case FRO:
-                    if (delta > 0 && myFro < 200) {
-                        fnc_realtime(FeedOvrFinePlus);
-                    } else if (delta < 0 && myFro > 10) {
-                        fnc_realtime(FeedOvrFineMinus);
-                    }
-                    break;
-                case SRO:
-                    if (delta > 0 && mySro < 200) {
-                        fnc_realtime(SpindleOvrFinePlus);
-                    } else if (delta < 0 && mySro > 10) {
-                        fnc_realtime(SpindleOvrFineMinus);
-                    }
-                    break;
-                case RT_FEED_SPEED:
-                    overd_display = FRO;
-            }
-
-            reDisplay();
-        }
-    }
-
-    void onDROChange() { reDisplay(); }
-    void onLimitsChange() { reDisplay(); }
+    void onDROChange() override { request_redisplay(); }
+    void onLimitsChange() override { request_redisplay(); }
 
     void onPoll() override {
         if (!lathe_mode_active()) {
@@ -278,7 +221,7 @@ public:
         }
     }
 
-    void reDisplay() {
+    void reDisplay() override {
         if (lathe_mode_active()) {
             draw_lathe_dashboard();
             return;
@@ -295,26 +238,18 @@ public:
 
         int y = 170;
         if (state == Cycle || state == Hold) {
-            int width  = 192;
+            int width = 192;
             int height = 10;
             if (myPercent > 0) {
                 drawRect(20, y, width, height, 5, LIGHTGREY);
-                width = (width * myPercent) / 100;
-                if (width > 0) {
-                    drawRect(20, y, width, height, 5, GREEN);
-                }
+                width = width * myPercent / 100;
+                if (width > 0) drawRect(20, y, width, height, 5, GREEN);
             }
-            // Feed override
             char legend[50];
             switch (overd_display) {
-                case FRO:
-                    sprintf(legend, "Feed Rate Ovr:%d%%", myFro);
-                    break;
-                case SRO:
-                    sprintf(legend, "Spindle Ovr:%d%%", mySro);
-                    break;
-                case RT_FEED_SPEED:
-                    sprintf(legend, "Fd:%d Spd:%d", myFeed, mySpeed);
+                case FRO: sprintf(legend, "Feed Rate Ovr:%d%%", myFro); break;
+                case SRO: sprintf(legend, "Spindle Ovr:%d%%", mySro); break;
+                case RT_FEED_SPEED: sprintf(legend, "Fd:%d Spd:%d", myFeed, mySpeed); break;
             }
             centered_text(legend, y + 23);
         } else {
@@ -322,13 +257,28 @@ public:
         }
 
         draw_status_buttons();
-
 #ifdef USE_WIFI
-        if (round_display) {
-            drawWiFiSignalBars(70, 20);
-        }
+        if (round_display) drawWiFiSignalBars(70, 20);
 #endif
         refreshDisplay();
     }
+
+    void diagnosticPreview(int fixture) {
+        _diagnostic_state = true;
+        _preview_alarm = 0;
+        switch (fixture) {
+            case 1: _preview_state = Cycle; break;
+            case 2: _preview_state = Hold; break;
+            case 3: _preview_state = Alarm; _preview_alarm = 14; break;
+            case 4: _preview_state = Disconnected; break;
+            default: _preview_state = Idle; break;
+        }
+        reDisplay();
+    }
 };
+
 StatusScene statusScene;
+
+void diagnostic_preview_status(int fixture) {
+    statusScene.diagnosticPreview(fixture);
+}

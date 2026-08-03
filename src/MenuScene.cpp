@@ -2,6 +2,7 @@
 #include "PieMenu.h"
 #include "LatheModel.h"
 #include "MachineProfile.h"
+#include "MachineHealthScene.h"
 #ifdef USE_WMB_FSS
 #    include "FileMenu.h"
 #endif
@@ -131,8 +132,8 @@ public:
         syncIconAvailability();
     }
     void onTouchClick() override {
-        if (touchIsCenter() && state == Alarm) {
-            push_scene(&statusScene);
+        if (touchIsCenter() && round_display && machine_profile_is_lathe()) {
+            push_scene(&machineHealthScene);
             return;
         }
         PieMenu::onTouchClick();

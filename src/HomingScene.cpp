@@ -31,6 +31,9 @@ int  homed_axes = 0;
 bool is_homed(int axis) {
     return homed_axes & (1 << axis);
 }
+bool is_axis_homed(int display_axis) {
+    return display_axis >= 0 && display_axis < HOMING_MACHINE_AXES && is_homed(display_axis);
+}
 void set_axis_homed(int axis) {
     homed_axes |= 1 << axis;
     request_redisplay();

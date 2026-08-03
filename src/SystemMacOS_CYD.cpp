@@ -346,6 +346,7 @@ static WiFiConfig _preview_cfg = { "FluidNC", "", "192.168.0.1", true };
 void        wifi_init(bool)                              {}
 void        wifi_poll()                                  {}
 bool        wifi_is_connected()                          { return true; }
+const char* wifi_local_ip()                               { return "127.0.0.1"; }
 bool        websocket_is_connected()                     { return true; }
 void        wifi_force_ws_reconnect()                    {}
 void        wifi_shutdown()                              {}

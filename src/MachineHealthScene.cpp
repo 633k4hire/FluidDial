@@ -4,7 +4,6 @@
 #include "FluidNCModel.h"
 #include "HomingScene.h"
 #include "LatheModel.h"
-#include "LatheUi.h"
 #include "MachineProfile.h"
 #include "MachineStateActions.h"
 #include "System.h"
@@ -243,7 +242,7 @@ void MachineHealthScene::drawConnections() {
     const char* capability = "Not installed";
     int capability_color = DARKGREY;
     if (fixture_fault || lathe.feedback_fault) {
-        capability = "Fault";
+        capability = "Encoder fault";
         capability_color = RED;
     } else if (lathe.encoder_enabled && lathe.feedback_stale) {
         capability = "Encoder stale";
@@ -271,20 +270,11 @@ void MachineHealthScene::reDisplay() {
     state_t shown_state = _preview == Preview::HomingAlarm ? Alarm : state;
     int shown_alarm = _preview == Preview::HomingAlarm ? 14 : lastAlarm;
     MachineStateActionLabels labels = machine_state_action_labels(shown_state, shown_alarm, true);
-    if (lathe_ui_enabled()) {
-        lathe_ui_action_legends(labels.red, labels.green, "Back");
-    } else {
-        drawButtonLegends(labels.red, labels.green, "Back");
-    }
+    drawButtonLegends(labels.red, labels.green, "Back");
     refreshDisplay();
 }
 
 void MachineHealthScene::diagnosticPreview(int selection) {
-    if (!_diagnostic_snapshot_active) {
-        _saved_page = _page;
-        _saved_preview = _preview;
-        _diagnostic_snapshot_active = true;
-    }
     _preview = Preview::Live;
     if (selection == 4) {
         _page = Page::Alarm;
@@ -299,19 +289,8 @@ void MachineHealthScene::diagnosticPreview(int selection) {
     reDisplay();
 }
 
-void MachineHealthScene::diagnosticRestore() {
-    if (!_diagnostic_snapshot_active) return;
-    _page = _saved_page;
-    _preview = _saved_preview;
-    _diagnostic_snapshot_active = false;
-}
-
 MachineHealthScene machineHealthScene;
 
 void diagnostic_preview_machine_health(int selection) {
     machineHealthScene.diagnosticPreview(selection);
-}
-
-void diagnostic_restore_machine_health_preview() {
-    machineHealthScene.diagnosticRestore();
 }

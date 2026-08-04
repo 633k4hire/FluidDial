@@ -13,7 +13,6 @@
 #include "System.h"
 #include "Button.h"
 #include "SystemScene.h"
-#include "LatheUi.h"
 
 extern Scene       menuScene;
 extern const char* git_info;
@@ -26,48 +25,6 @@ static constexpr int SBX = 12, SBY = 160, SBW = 216, SBH = 36;  // switch button
 
 static constexpr int CARD_Y0    = 68;
 static constexpr int CARD_PITCH = CH + 4;  // 32 px per card row
-
-namespace {
-void drawConnectionHero(TransportMode mode, int y, int color) {
-    constexpr int x = 120;
-    if (mode == TransportMode::UART) {
-        canvas.drawRoundRect(x - 19, y - 12, 30, 24, 5, color);
-        canvas.drawRoundRect(x - 18, y - 11, 28, 22, 4, color);
-        canvas.drawLine(x + 11, y - 6, x + 23, y - 6, color);
-        canvas.drawLine(x + 11, y - 5, x + 23, y - 5, color);
-        canvas.drawLine(x + 11, y + 5, x + 23, y + 5, color);
-        canvas.drawLine(x + 11, y + 6, x + 23, y + 6, color);
-        canvas.drawLine(x - 10, y - 18, x - 10, y - 12, color);
-        canvas.drawLine(x - 9, y - 18, x - 9, y - 12, color);
-        canvas.drawLine(x, y - 18, x, y - 12, color);
-        canvas.drawLine(x + 1, y - 18, x + 1, y - 12, color);
-    } else if (mode == TransportMode::WIFI) {
-        canvas.drawArc(x, y + 8, 23, 20, 205, 335, color);
-        canvas.drawArc(x, y + 8, 16, 13, 208, 332, color);
-        canvas.drawArc(x, y + 8, 9, 6, 213, 327, color);
-        canvas.fillCircle(x, y + 8, 3, color);
-    } else {
-        canvas.drawCircle(x - 13, y, 7, color);
-        canvas.drawCircle(x - 13, y, 6, color);
-        canvas.drawCircle(x + 13, y, 7, color);
-        canvas.drawCircle(x + 13, y, 6, color);
-        canvas.drawLine(x - 6, y - 4, x + 6, y - 4, color);
-        canvas.drawLine(x - 6, y - 3, x + 6, y - 3, color);
-        canvas.drawLine(x - 6, y + 4, x + 6, y + 4, color);
-        canvas.drawLine(x - 6, y + 5, x + 6, y + 5, color);
-        canvas.drawLine(x, y - 17, x, y + 17, color);
-        canvas.drawLine(x + 1, y - 17, x + 1, y + 17, color);
-    }
-}
-
-void drawConnectionCard(int y, const char* label, const char* detail, int color) {
-    canvas.fillRoundRect(36, y, 168, 38, 8, lathe_ui_panel_alt());
-    canvas.drawRoundRect(36, y, 168, 38, 8, color);
-    canvas.drawRoundRect(37, y + 1, 166, 36, 7, color);
-    lathe_ui_fit_text(label, 120, y + 14, 148, color, TINY, middle_center);
-    lathe_ui_fit_text(detail, 120, y + 29, 148, lathe_ui_text(), TINY, middle_center);
-}
-}
 
 // ─── Card drawing helpers ──────────────────────────────────────────────────────
 
@@ -148,28 +105,12 @@ void WiFiSetupScene::onDialButtonPress() {
 }
 
 void WiFiSetupScene::onTouchClick() {
-    if (lathe_ui_enabled()) {
-        if (!wifi_in_ap_mode() && touchX >= 36 && touchX <= 204 && touchY >= 156 && touchY <= 186) {
-            onModeSwitchButtonPress();
-        }
-        return;
-    }
     modeSwitchBtn.handleTouch(touchX, touchY);
 }
 
 // ─── Drawing ──────────────────────────────────────────────────────────────────
 
 void WiFiSetupScene::drawApView() {
-    if (lathe_ui_enabled()) {
-        modeSwitchBtn.w = 0;
-        modeSwitchBtn.h = 0;
-        modeSwitchBtn.onPress = nullptr;
-        drawConnectionHero(TransportMode::WIFI, 82, lathe_ui_amber());
-        drawConnectionCard(109, "SETUP ACCESS POINT", wifi_ap_ssid(), lathe_ui_amber());
-        drawConnectionCard(151, "OPEN IN BROWSER", "192.168.4.1", lathe_ui_green());
-        lathe_ui_action_legends("EXIT", "RESTART", "");
-        return;
-    }
     // ── Status badge ──────────────────────────────────────────────────────────
     int by = round_display ? BY + 5 : BY - 3;
     int bx = round_display ? 55 : BX;
@@ -208,71 +149,6 @@ void WiFiSetupScene::drawSettingsView() {
     WiFiConfig    cfg        = wifi_active_config();
     bool          ws_ok      = websocket_is_connected();
     bool          wf_ok      = wifi_is_connected();
-
-    if (lathe_ui_enabled()) {
-        const char* mode_label = "WI-FI";
-        const char* detail     = "CONNECTING";
-        int         color      = lathe_ui_amber();
-
-        if (uart_mode) {
-            mode_label = "WIRED UART";
-            detail     = "1 MBAUD / LOCAL";
-            color      = lathe_ui_blue();
-        } else if (espnow_mode) {
-            color = lathe_ui_blue();
-            if (espnow_is_connected()) {
-                mode_label = "ESP-NOW READY";
-                detail     = espnow_status_str();
-                color      = lathe_ui_green();
-            } else if (espnow_is_reconnecting()) {
-                mode_label = "ESP-NOW SEARCHING";
-                detail     = "SCANNING FOR MACHINE";
-            } else if (espnow_is_paired()) {
-                mode_label = "ESP-NOW PAIRED";
-                detail     = "WAITING FOR MACHINE";
-            } else {
-                mode_label = "ESP-NOW";
-                detail     = "NOT PAIRED";
-            }
-        } else if (!cfg.valid) {
-            mode_label = "WI-FI NOT CONFIGURED";
-            detail     = "PRESS SETUP";
-            color      = RED;
-        } else if (ws_ok) {
-            mode_label = "FLUIDNC CONNECTED";
-            detail     = cfg.ssid;
-            color      = lathe_ui_green();
-        } else if (wf_ok) {
-            mode_label = "FLUIDNC CONNECTING";
-            detail     = cfg.fluidnc_ip;
-            color      = lathe_ui_amber();
-        } else if (wifi_last_error()) {
-            mode_label = "WI-FI ERROR";
-            detail     = wifi_last_error();
-            color      = RED;
-        } else {
-            mode_label = "WI-FI CONNECTING";
-            detail     = cfg.ssid;
-            color      = lathe_ui_amber();
-        }
-
-        drawConnectionHero(transport, 82, color);
-        drawConnectionCard(109, mode_label, detail, color);
-        modeSwitchBtn.w = 0;
-        modeSwitchBtn.h = 0;
-        modeSwitchBtn.onPress = nullptr;
-        canvas.fillRoundRect(36, 156, 168, 30, 8, lathe_ui_panel_alt());
-        canvas.drawRoundRect(36, 156, 168, 30, 8, lathe_ui_blue());
-        canvas.drawRoundRect(37, 157, 166, 28, 7, lathe_ui_blue());
-        lathe_ui_fit_text("CHANGE TRANSPORT", 120, 173, 150, lathe_ui_blue(), TINY, middle_center);
-
-        const char* green_label;
-        if (uart_mode) green_label = "RESTART";
-        else if (espnow_mode) green_label = espnow_profile_count() > 0 ? "MACHINES" : "PAIR";
-        else green_label = "SETUP";
-        lathe_ui_action_legends("BACK", green_label, "MORE");
-        return;
-    }
 
     // ── Status badge ──────────────────────────────────────────────────────────
     int         badge_fill;
@@ -436,18 +312,6 @@ void WiFiSetupScene::drawSettingsView() {
 }
 
 void WiFiSetupScene::reDisplay() {
-    if (lathe_ui_enabled()) {
-        lathe_ui_detail_surface("CONNECTION");
-        if (wifi_in_ap_mode()) {
-            drawApView();
-        } else {
-            drawSettingsView();
-        }
-        drawError();
-        refreshDisplay();
-        return;
-    }
-
     background();
 
     const char* title;

@@ -5,9 +5,6 @@
 #include "Drawing.h"
 #include "alarm.h"
 #include "MachineProfile.h"
-#ifdef MAIJKER_XZACT_LATHE
-#    include "LatheUi.h"
-#endif
 #include <map>
 #ifdef USE_WIFI
 #    include "WiFiConnection.h"
@@ -436,13 +433,6 @@ static void drawWiFiSignalOverlay() {
 #endif
 
 void refreshDisplay() {
-#ifdef MAIJKER_XZACT_LATHE
-    // The display controller exposes a square 240x240 framebuffer even though
-    // the installed M5Dial is physically round.  Clip at the single display
-    // flush boundary so every Maijker scene and diagnostic capture obeys the
-    // same circular viewport, including transient/error overlays.
-    if (lathe_ui_enabled()) lathe_ui_round_clip();
-#endif
 #ifdef USE_WIFI
     drawWiFiSignalOverlay();
 #endif

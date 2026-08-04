@@ -13,55 +13,6 @@
 #endif
 #include "Drawing.h"
 #include "System.h"
-#include "LatheUi.h"
-
-namespace {
-void drawOtaShield(int y, int color, bool upload, bool error) {
-    constexpr int x = 120;
-    canvas.drawLine(x - 20, y - 17, x, y - 25, color);
-    canvas.drawLine(x - 19, y - 16, x, y - 24, color);
-    canvas.drawLine(x, y - 25, x + 20, y - 17, color);
-    canvas.drawLine(x, y - 24, x + 19, y - 16, color);
-    canvas.drawLine(x - 20, y - 17, x - 16, y + 12, color);
-    canvas.drawLine(x - 19, y - 16, x - 15, y + 11, color);
-    canvas.drawLine(x + 20, y - 17, x + 16, y + 12, color);
-    canvas.drawLine(x + 19, y - 16, x + 15, y + 11, color);
-    canvas.drawLine(x - 16, y + 12, x, y + 24, color);
-    canvas.drawLine(x - 15, y + 11, x, y + 23, color);
-    canvas.drawLine(x + 16, y + 12, x, y + 24, color);
-    canvas.drawLine(x + 15, y + 11, x, y + 23, color);
-    if (error) {
-        canvas.drawLine(x - 8, y - 7, x + 8, y + 9, color);
-        canvas.drawLine(x - 7, y - 7, x + 9, y + 9, color);
-        canvas.drawLine(x + 8, y - 7, x - 8, y + 9, color);
-        canvas.drawLine(x + 9, y - 7, x - 7, y + 9, color);
-    } else if (upload) {
-        canvas.drawLine(x, y + 11, x, y - 9, color);
-        canvas.drawLine(x + 1, y + 11, x + 1, y - 9, color);
-        canvas.fillTriangle(x, y - 14, x - 6, y - 6, x + 6, y - 6, color);
-    } else {
-        canvas.drawLine(x - 8, y, x - 2, y + 7, color);
-        canvas.drawLine(x - 7, y, x - 1, y + 7, color);
-        canvas.drawLine(x - 2, y + 7, x + 10, y - 8, color);
-        canvas.drawLine(x - 1, y + 7, x + 11, y - 8, color);
-    }
-}
-
-void drawOtaProgress(int pct) {
-    constexpr int X = 36;
-    constexpr int Y = 145;
-    constexpr int W = 168;
-    constexpr int H = 14;
-    canvas.fillRoundRect(X, Y, W, H, 7, lathe_ui_bg());
-    canvas.drawRoundRect(X, Y, W, H, 7, lathe_ui_muted());
-    canvas.drawRoundRect(X + 1, Y + 1, W - 2, H - 2, 6, lathe_ui_muted());
-    int fill = (W - 6) * pct / 100;
-    if (fill > 0) canvas.fillRoundRect(X + 3, Y + 3, fill, H - 6, 4, lathe_ui_green());
-    char value[8];
-    snprintf(value, sizeof(value), "%d%%", pct);
-    centered_text(value, 177, lathe_ui_text(), TINY);
-}
-}
 
 void OTAScene::onEntry(void* arg) {
     wifi_start_ota_server();
@@ -101,80 +52,6 @@ void OTAScene::onGreenButtonPress() {
 }
 
 void OTAScene::reDisplay() {
-    if (lathe_ui_enabled()) {
-        lathe_ui_detail_surface("SECURE OTA");
-        int pct = wifi_ota_progress();
-#ifdef ARDUINO
-        if (secure_ota_recovery_pending()) {
-            drawOtaShield(88, lathe_ui_amber(), false, false);
-            lathe_ui_fit_text("RECOVERY DOWNGRADE", 120, 126, 168, lathe_ui_amber(), SMALL, middle_center);
-            centered_text("SIGNED RECOVERY KEY", 150, lathe_ui_blue(), TINY);
-            centered_text("CONFIRM ONLY IF INTENDED", 172, lathe_ui_muted(), TINY);
-            lathe_ui_action_legends("CANCEL", "AUTHORIZE", "");
-            refreshDisplay();
-            return;
-        }
-        if (secure_ota_pairing_pending()) {
-            drawOtaShield(84, lathe_ui_blue(), false, false);
-            centered_text("COMPARE PAIRING CODE", 122, lathe_ui_muted(), TINY);
-            lathe_ui_fit_text(secure_ota_pairing_code(), 120, 146, 168, lathe_ui_blue(), SMALL, middle_center);
-            centered_text("MATCH FLUIDNC.LOCAL", 170, lathe_ui_muted(), TINY);
-            lathe_ui_action_legends("CANCEL", "CONFIRM", "");
-            refreshDisplay();
-            return;
-        }
-#endif
-        if (pct == -1) {
-            drawOtaShield(90, RED, false, true);
-            centered_text("UPLOAD FAILED", 132, RED, SMALL);
-            centered_text("CHECK BROWSER", 157, lathe_ui_muted(), TINY);
-            lathe_ui_action_legends("CANCEL", "", "");
-            refreshDisplay();
-            return;
-        }
-        if (pct >= 1) {
-            drawOtaShield(88, pct == 100 ? lathe_ui_green() : lathe_ui_blue(), true, false);
-            lathe_ui_fit_text(pct == 100 ? "UPLOAD COMPLETE" : "UPLOADING FIRMWARE", 120, 128, 168,
-                              pct == 100 ? lathe_ui_green() : lathe_ui_amber(), SMALL, middle_center);
-            drawOtaProgress(pct);
-            lathe_ui_action_legends("CANCEL", "", "");
-            refreshDisplay();
-            return;
-        }
-
-        if (wifi_ota_ap_mode()) {
-            drawOtaShield(82, lathe_ui_blue(), true, false);
-            centered_text("CONNECT TO WI-FI", 119, lathe_ui_muted(), TINY);
-            lathe_ui_fit_text(wifi_ap_ssid(), 120, 140, 168, lathe_ui_blue(), SMALL, middle_center);
-            centered_text("OPEN 192.168.4.1", 166, lathe_ui_green(), TINY);
-            lathe_ui_action_legends("CANCEL", "", "");
-            refreshDisplay();
-            return;
-        }
-
-        const char* error = wifi_ota_error();
-        if (wifi_ota_sta_connected()) {
-            drawOtaShield(82, lathe_ui_green(), true, false);
-            centered_text("READY FOR UPLOAD", 121, lathe_ui_green(), SMALL);
-            centered_text("FLUIDDIAL.LOCAL", 146, lathe_ui_text(), TINY);
-            lathe_ui_fit_text(wifi_ota_ip(), 120, 168, 168, lathe_ui_muted(), TINY, middle_center);
-            lathe_ui_action_legends("CANCEL", "", "");
-        } else if (error) {
-            drawOtaShield(82, RED, false, true);
-            centered_text("WI-FI FAILED", 121, RED, SMALL);
-            lathe_ui_fit_text(error, 120, 146, 168, lathe_ui_amber(), TINY, middle_center);
-            centered_text("RE-ENTER WI-FI", 168, lathe_ui_muted(), TINY);
-            lathe_ui_action_legends("CANCEL", "SETUP", "");
-        } else {
-            drawOtaShield(86, lathe_ui_blue(), true, false);
-            lathe_ui_fit_text("CONNECTING TO WI-FI", 120, 130, 168, lathe_ui_amber(), SMALL, middle_center);
-            centered_text("STAND BY", 157, lathe_ui_muted(), TINY);
-            lathe_ui_action_legends("CANCEL", "", "");
-        }
-        refreshDisplay();
-        return;
-    }
-
     background();
 
     if (round_display) {

@@ -128,29 +128,30 @@ private:
         }
 
         lathe_ui_detail_surface("STATUS");
-        text(current_wcs(), 32, 62, lathe_ui_blue(), TINY, middle_left);
-        text(inInches ? "IN" : "MM", 208, 62, lathe_ui_muted(), TINY, middle_right);
+        lathe_ui_state_pill(88, 10, shown_state);
+        lathe_ui_badge(30, 44, 64, current_wcs(), lathe_ui_blue());
+        text(inInches ? "IN" : "MM", 206, 55, lathe_ui_muted(), TINY, middle_right);
 
         for (int axis = 0; axis < profile_axis_count() && axis < 3; ++axis) {
             int machine_axis = profile_machine_axis(axis);
             pos_t value = machine_axis >= 0 && machine_axis < 6 ? myAxes[machine_axis] : 0;
-            static const int dro_y[3] = { 82, 111, 140 };
-            lathe_ui_dro_row(dro_y[axis], profile_axis_char(axis), value, axis == 0);
+            lathe_ui_dro_row(82 + axis * 29, profile_axis_char(axis), value, axis == 0);
         }
 
-        char machine[32];
+        char tool[12];
         if (lathe.active_tool > 0) {
-            if (lathe.effective_rpm > 0.5f) {
-                snprintf(machine, sizeof(machine), "T%d / %.0f RPM", lathe.active_tool, lathe.effective_rpm);
-            } else {
-                snprintf(machine, sizeof(machine), "T%d / STOP", lathe.active_tool);
-            }
+            snprintf(tool, sizeof(tool), "T%d", lathe.active_tool);
         } else {
-            snprintf(machine, sizeof(machine), "T- / %s", lathe.effective_rpm > 0.5f ? "RUN" : "STOP");
+            snprintf(tool, sizeof(tool), "T-");
         }
-        lathe_ui_value_row(169, "MACHINE", machine,
-                           lathe.effective_rpm > 0.5f ? lathe_ui_green() :
-                           lathe.active_tool == 5 ? lathe_ui_coral() : lathe_ui_text());
+        char spindle[24];
+        if (lathe.effective_rpm > 0.5f) {
+            snprintf(spindle, sizeof(spindle), "Spindle %.0f", lathe.effective_rpm);
+        } else {
+            snprintf(spindle, sizeof(spindle), "Spindle STOP");
+        }
+        lathe_ui_value_row(171, "TOOL", tool, lathe.active_tool == 5 ? lathe_ui_coral() : lathe_ui_text());
+        lathe_ui_value_row(188, "SPINDLE", spindle + 8, lathe.effective_rpm > 0.5f ? lathe_ui_green() : lathe_ui_muted());
 
         const char* context = nullptr;
         int context_color = LIGHTGREY;
@@ -175,16 +176,14 @@ private:
             context_color = lathe_command_pending() ? lathe_ui_blue() : lathe_ui_amber();
         }
         if (context) {
-            lathe_ui_fit_text(context, 120, 188, 168, context_color, TINY, middle_center);
+            lathe_ui_fit_text(context, 120, 207, 174, context_color, TINY, middle_center);
         } else {
             char modes[48];
             snprintf(modes, sizeof(modes), "F%u  S%u  %s", myFeed, mySpeed, mode_string());
-            lathe_ui_fit_text(modes, 120, 188, 168, lathe_ui_muted(), TINY, middle_center);
+            lathe_ui_fit_text(modes, 120, 207, 174, lathe_ui_muted(), TINY, middle_center);
         }
 
-        MachineStateActionLabels labels = machine_state_action_labels(shown_state, shown_alarm, true);
-        const char* center = (shown_state == Cycle || shown_state == Hold || shown_state == DoorClosed) ? "Rst Ovr" : "Back";
-        lathe_ui_action_legends(labels.red, labels.green, center);
+        draw_status_buttons();
         refreshDisplay();
     }
 
@@ -324,18 +323,10 @@ public:
         }
         reDisplay();
     }
-
-    void diagnosticRestore() {
-        _diagnostic_state = false;
-    }
 };
 
 StatusScene statusScene;
 
 void diagnostic_preview_status(int fixture) {
     statusScene.diagnosticPreview(fixture);
-}
-
-void diagnostic_restore_status_preview() {
-    statusScene.diagnosticRestore();
 }

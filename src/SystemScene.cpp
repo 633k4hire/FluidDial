@@ -12,7 +12,6 @@
 #include "Drawing.h"
 #include "System.h"
 #include "FluidNCModel.h"
-#include "LatheUi.h"
 
 #include <algorithm>
 
@@ -41,54 +40,6 @@ static constexpr int ITEM_PITCH_CYD   = 42;
 static constexpr int START_Y_ROUND    = 38;
 static constexpr int START_Y_CYD      = 46;
 
-namespace {
-constexpr int LATHE_ITEM_X     = 28;
-constexpr int LATHE_ITEM_Y     = 64;
-constexpr int LATHE_ITEM_W     = 184;
-constexpr int LATHE_ITEM_H     = 27;
-constexpr int LATHE_ITEM_PITCH = 30;
-
-void drawSystemIcon(int item, int x, int y, int color) {
-    switch (item) {
-        case 0:  // Restart
-            canvas.drawArc(x, y, 10, 8, 35, 315, color);
-            canvas.drawArc(x, y, 9, 7, 35, 315, color);
-            canvas.fillTriangle(x + 7, y - 8, x + 13, y - 8, x + 11, y - 3, color);
-            break;
-        case 1:  // Sleep
-            canvas.drawArc(x - 2, y, 11, 9, 55, 300, color);
-            canvas.drawArc(x + 3, y, 9, 7, 100, 260, color);
-            break;
-        case 2:  // Brightness
-            canvas.drawCircle(x, y, 6, color);
-            canvas.drawCircle(x, y, 5, color);
-            for (int d = -1; d <= 1; d += 2) {
-                canvas.drawLine(x + d * 9, y, x + d * 13, y, color);
-                canvas.drawLine(x + d * 9, y + 1, x + d * 13, y + 1, color);
-                canvas.drawLine(x, y + d * 9, x, y + d * 13, color);
-                canvas.drawLine(x + 1, y + d * 9, x + 1, y + d * 13, color);
-                canvas.drawLine(x + d * 7, y + d * 7, x + d * 10, y + d * 10, color);
-                canvas.drawLine(x + d * 7 + 1, y + d * 7, x + d * 10 + 1, y + d * 10, color);
-                canvas.drawLine(x + d * 7, y - d * 7, x + d * 10, y - d * 10, color);
-                canvas.drawLine(x + d * 7 + 1, y - d * 7, x + d * 10 + 1, y - d * 10, color);
-            }
-            break;
-        default:  // OTA shield/upload
-            canvas.drawLine(x - 9, y - 9, x, y - 13, color);
-            canvas.drawLine(x - 8, y - 8, x, y - 12, color);
-            canvas.drawLine(x, y - 13, x + 9, y - 9, color);
-            canvas.drawLine(x, y - 12, x + 8, y - 8, color);
-            canvas.drawLine(x - 9, y - 9, x - 7, y + 5, color);
-            canvas.drawLine(x + 9, y - 9, x + 7, y + 5, color);
-            canvas.drawLine(x - 7, y + 5, x, y + 11, color);
-            canvas.drawLine(x + 7, y + 5, x, y + 11, color);
-            canvas.drawLine(x, y + 5, x, y - 5, color);
-            canvas.fillTriangle(x, y - 8, x - 4, y - 3, x + 4, y - 3, color);
-            break;
-    }
-}
-}
-
 int SystemScene::itemCount() { return N_ITEMS; }
 
 void SystemScene::onEntry(void* arg) {
@@ -104,18 +55,8 @@ void SystemScene::onEncoder(int delta) {
 }
 
 void SystemScene::diagnosticPreview(int selection) {
-    if (!_diagnostic_snapshot_active) {
-        _saved_selected = _selected;
-        _diagnostic_snapshot_active = true;
-    }
     _selected = std::max(0, std::min(selection, N_ITEMS - 1));
     reDisplay();
-}
-
-void SystemScene::diagnosticRestore() {
-    if (!_diagnostic_snapshot_active) return;
-    _selected = _saved_selected;
-    _diagnostic_snapshot_active = false;
 }
 
 void SystemScene::activateSelected() {
@@ -158,19 +99,6 @@ void SystemScene::onGreenButtonPress() { activateSelected(); }
 void SystemScene::onRedButtonPress()   { activate_scene(&wifiSetupScene); }
 
 void SystemScene::onTouchClick() {
-    if (lathe_ui_enabled()) {
-        for (int i = 0; i < N_ITEMS; ++i) {
-            int y = LATHE_ITEM_Y + i * LATHE_ITEM_PITCH;
-            if (touchX >= LATHE_ITEM_X && touchX <= LATHE_ITEM_X + LATHE_ITEM_W
-                && touchY >= y && touchY <= y + LATHE_ITEM_H) {
-                _selected = i;
-                reDisplay();
-                activateSelected();
-                return;
-            }
-        }
-        return;
-    }
     int item_h    = round_display ? ITEM_H_ROUND    : ITEM_H_CYD;
     int item_pitch = round_display ? ITEM_PITCH_ROUND : ITEM_PITCH_CYD;
     int start_y   = round_display ? START_Y_ROUND   : START_Y_CYD;
@@ -186,29 +114,6 @@ void SystemScene::onTouchClick() {
 }
 
 void SystemScene::reDisplay() {
-    if (lathe_ui_enabled()) {
-        lathe_ui_detail_surface("SETTINGS");
-        for (int i = 0; i < N_ITEMS; ++i) {
-            int  y   = LATHE_ITEM_Y + i * LATHE_ITEM_PITCH;
-            bool sel = i == _selected;
-            if (sel) {
-                canvas.fillRoundRect(LATHE_ITEM_X, y, LATHE_ITEM_W, LATHE_ITEM_H, 7, lathe_ui_panel_alt());
-                canvas.drawRoundRect(LATHE_ITEM_X, y, LATHE_ITEM_W, LATHE_ITEM_H, 7, lathe_ui_blue());
-                canvas.drawRoundRect(LATHE_ITEM_X + 1, y + 1, LATHE_ITEM_W - 2, LATHE_ITEM_H - 2, 6, lathe_ui_blue());
-            }
-            int color = sel ? lathe_ui_blue() : lathe_ui_muted();
-            drawSystemIcon(i, 49, y + LATHE_ITEM_H / 2, color);
-            text(items[i].label, 72, y + 15, sel ? lathe_ui_text() : lathe_ui_muted(), TINY, middle_left);
-            canvas.drawLine(194, y + 10, 199, y + 14, color);
-            canvas.drawLine(199, y + 14, 194, y + 18, color);
-            canvas.drawLine(195, y + 10, 200, y + 14, color);
-            canvas.drawLine(200, y + 14, 195, y + 18, color);
-        }
-        lathe_ui_action_legends("BACK", "SELECT", "");
-        refreshDisplay();
-        return;
-    }
-
     int item_h     = round_display ? ITEM_H_ROUND    : ITEM_H_CYD;
     int item_pitch = round_display ? ITEM_PITCH_ROUND : ITEM_PITCH_CYD;
     int start_y    = round_display ? START_Y_ROUND   : START_Y_CYD;
@@ -253,10 +158,6 @@ SystemScene systemScene;
 
 void diagnostic_preview_system(int selection) {
     systemScene.diagnosticPreview(selection);
-}
-
-void diagnostic_restore_system_preview() {
-    systemScene.diagnosticRestore();
 }
 
 #endif  // USE_WIFI

@@ -9,8 +9,6 @@
 #include "System.h"  // dbg_printf()
 #include "LatheModel.h"
 #include "MachineProfile.h"
-#include "LatheUiModel.h"
-#include "LatheUi.h"
 
 //   Jog tracing — enable with -DJOG_TRACE
 //   flow: 0=Blocking(UART) 1=Timed(ESP-NOW horizon) 2=Window(Telnet ok-count)
@@ -195,16 +193,6 @@ public:
     }
 
     e4_t distance(int axis) { return e4_power10(_dist_index[axis] - num_digits()); }
-    JogUiSnapshot uiSnapshot() {
-        JogUiSnapshot snapshot;
-        snapshot.selected_mask = static_cast<uint8_t>(_selected_mask);
-        for (int axis = 0; axis < 3; ++axis) {
-            snapshot.step[axis] = distance(axis);
-        }
-        snapshot.dynamic = _dynamic_mode;
-        snapshot.moving  = _mpg_jogging || state == Jog;
-        return snapshot;
-    }
     void unselect_all() { _selected_mask = 0; }
     bool selected(int axis) { return _selected_mask & (1 << axis); }
     bool only(int axis) { return _selected_mask == (1 << axis); }
@@ -284,35 +272,6 @@ public:
     }
 
     void reDisplay() {
-        if (lathe_ui_enabled()) {
-            lathe_ui_detail_surface("JOG");
-            lathe_ui_badge(29, 44, 82, _dynamic_mode ? "DYNAMIC" : "PRECISE", lathe_ui_blue());
-            if (state != Jog && _cancelling) _cancelling = false;
-            if (_cancelling || _cancel_held) {
-                centered_text("JOG CANCELED", 116, RED, SMALL);
-            } else {
-                for (int axis = 0; axis < 2; ++axis) {
-                    int machine_axis = profile_machine_axis(axis);
-                    pos_t value = machine_axis >= 0 && machine_axis < 6 ? myAxes[machine_axis] : 0;
-                    lathe_ui_dro_row(88 + axis * 43, profile_axis_char(axis), value, selected(axis));
-                }
-                int active_axis = selected(1) ? 1 : 0;
-                lathe_ui_value_row(169, "ACTIVE AXIS", selected(0) && selected(1) ? "X + Z" : profile_axis_cstr(active_axis), lathe_ui_blue());
-                lathe_ui_value_row(191, "INCREMENT", e4_to_cstr(distance(active_axis), 4), lathe_ui_text());
-                if (state == Jog) centered_text("TOUCH TO CANCEL", 209, lathe_ui_amber(), TINY);
-                else {
-                    char dial_legend[10] = "Zero";
-                    size_t length = 4;
-                    for (int axis = 0; axis < num_axes && length + 1 < sizeof(dial_legend); ++axis) {
-                        if (selected(axis)) dial_legend[length++] = profile_axis_char(axis);
-                    }
-                    dial_legend[length] = '\0';
-                    drawButtonLegends("Jog-", "Jog+", dial_legend);
-                }
-            }
-            refreshDisplay();
-            return;
-        }
         background();
         drawJogBg();
         drawMenuTitle("Jog");
@@ -873,4 +832,3 @@ void diagnostic_preview_jog(int selection) {
 
 bool jog_dynamic_mode() { return multiJogScene.dynamicMode(); }
 void jog_toggle_mode() { multiJogScene.toggleMode(); }
-JogUiSnapshot jog_ui_snapshot() { return multiJogScene.uiSnapshot(); }

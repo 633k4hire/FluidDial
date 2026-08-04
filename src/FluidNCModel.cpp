@@ -37,8 +37,6 @@ uint32_t           mySpeed            = 0;
 uint32_t           mySelectedTool     = 0;
 
 std::string myModes = "no data";
-static std::string s_current_wcs = "--";
-static ProbeResult s_probe_result;
 static FluidNcLinkDiagnostics s_link_diagnostics;
 
 int      lastAlarm = 0;
@@ -141,23 +139,6 @@ extern "C" void show_feed_spindle(uint32_t feedrate, uint32_t spindle_speed) {
 extern "C" void show_limits(bool probe, const bool* limits, size_t n_axis) {
     myProbeSwitch = probe;
     memcpy(myLimitSwitches, limits, n_axis * sizeof(*limits));
-}
-
-extern "C" void show_probe_pin(bool on) {
-    myProbeSwitch = on;
-    request_redisplay();
-}
-
-extern "C" void show_probe(const pos_t* axes, const bool probe_success, size_t n_axis) {
-    size_t count = n_axis > 6 ? 6 : n_axis;
-    s_probe_result.known      = true;
-    s_probe_result.success    = probe_success;
-    s_probe_result.axis_count = static_cast<uint8_t>(count);
-    s_probe_result.updated_ms = milliseconds();
-    for (size_t axis = 0; axis < count; ++axis) {
-        s_probe_result.axes_mm[axis] = axes[axis];
-    }
-    request_redisplay();
 }
 
 extern "C" void show_control_pins(const char* pins) {
@@ -285,14 +266,6 @@ const char* intToCStr(int val) {
 
 const char* mode_string() {
     return myModes.c_str();
-}
-
-const char* current_wcs() {
-    return s_current_wcs.c_str();
-}
-
-const ProbeResult& last_probe_result() {
-    return s_probe_result;
 }
 
 state_t previous_state;
@@ -428,7 +401,6 @@ extern "C" void show_alarm(int alarm) {
 extern "C" void show_gcode_modes(struct gcode_modes* modes) {
     inInches = strcmp(modes->units, "In") == 0 || strcmp(modes->units, "G20") == 0;
 
-    s_current_wcs = modes->wcs && modes->wcs[0] ? modes->wcs : "--";
     myModes = modes->wcs;
     myModes += " ";
     myModes += modes->units;

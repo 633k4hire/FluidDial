@@ -4,7 +4,6 @@
 
 #include "Scene.h"
 #include "FileParser.h"
-#include "LatheUi.h"
 #include "polar.h"
 
 // #define SMOOTH_SCROLL
@@ -25,9 +24,6 @@ private:
     std::string      dirName         = "/sd";
     int              dirLevel        = 0;
     bool             _selecting_file = false;
-    bool             _reading = false;
-    std::string      _error_string;
-    int              _diagnostic_fixture = -1;
 
     const char* format_size(size_t size) {
         const int   buflen = 30;
@@ -49,20 +45,12 @@ private:
 public:
     FileSelectScene() : Scene("Files", 4) {}
 
-    void diagnosticPreview(int fixture) {
-        _diagnostic_fixture = fixture;
-        reDisplay();
-    }
-
     void onEntry(void* arg) {
-        _diagnostic_fixture = -1;
         // a first time only thing, because files are already loaded
         if (prevSelect.size() == 0) {
             prevSelect.push_back(0);
         }
         if (fileVector.empty()) {
-            _reading = true;
-            _error_string.clear();
             pending_file_select_scene = this;
             schedule_action(request_current_file_list);
         }
@@ -82,8 +70,6 @@ public:
                 dirName += "/";
                 dirName += fileInfo.fileName;
                 ++dirLevel;
-                _reading = true;
-                _error_string.clear();
                 request_file_list(dirName.c_str());
             } else {
                 std::string path(dirName);
@@ -104,14 +90,10 @@ public:
             auto pos = dirName.rfind('/');
             dirName  = dirName.substr(0, pos);
             --dirLevel;
-            _reading = true;
-            _error_string.clear();
             request_file_list(dirName.c_str());
         } else {
             prevSelect.clear();
             prevSelect.push_back(0);
-            _reading = true;
-            _error_string.clear();
             init_file_list();
         }
         ackBeep();
@@ -125,18 +107,8 @@ public:
         }
     }
     void onFilesList() override {
-        _reading = false;
-        _error_string.clear();
         _selected_file = prevSelect.back();
         reDisplay();
-    }
-
-    void onError(const char* error) override {
-        if (_reading) {
-            _reading = false;
-            _error_string = error ? error : "SD ERROR";
-            reDisplay();
-        }
     }
 
     void onEncoder(int delta) override { scroll(delta); }
@@ -206,8 +178,6 @@ public:
     void onRightFlick() { activate_scene(&jogScene); }
 
     void requestCurrentDirectory() {
-        _reading = true;
-        _error_string.clear();
         if (dirLevel == 0) {
             init_file_list();
         } else {
@@ -216,38 +186,6 @@ public:
     }
 
     void showFiles() {
-        if (lathe_ui_enabled()) {
-            lathe_ui_detail_surface("FILES");
-            lathe_ui_fit_text(dirName.c_str(), 120, 50, 160, lathe_ui_blue(), TINY, middle_center);
-            bool fixture_error = _diagnostic_fixture == 3;
-            bool fixture_empty = _diagnostic_fixture == 2;
-            bool fixture_loading = _diagnostic_fixture == 1;
-            if (fixture_error || !_error_string.empty()) {
-                lathe_ui_fit_text(fixture_error ? "SD CARD ERROR" : _error_string.c_str(), 120, 115, 165, RED, SMALL, middle_center);
-            } else if (fixture_empty || fixture_loading || fileVector.empty()) {
-                bool loading = fixture_loading || (_diagnostic_fixture < 0 && _reading);
-                centered_text(loading ? "LOADING SD" : "NO FILES", 112,
-                              loading ? lathe_ui_amber() : lathe_ui_muted(), SMALL);
-            } else {
-                int first = _selected_file - 2;
-                int last = _selected_file + 2;
-                for (int index = first; index <= last; ++index) {
-                    if (index < 0 || index >= static_cast<int>(fileVector.size())) continue;
-                    int y = 78 + (index - first) * 27;
-                    bool selected = index == _selected_file;
-                    if (selected) canvas.drawRoundRect(22, y - 12, 196, 24, 7, lathe_ui_blue());
-                    const char* kind = fileVector[index].isDir() ? "DIR" : "FILE";
-                    text(kind, 31, y, selected ? lathe_ui_blue() : lathe_ui_muted(), TINY, middle_left);
-                    lathe_ui_fit_text(fileVector[index].fileName.c_str(), 68, y, 132, lathe_ui_text());
-                }
-                char position[24];
-                snprintf(position, sizeof(position), "%d / %u", _selected_file + 1, static_cast<unsigned>(fileVector.size()));
-                centered_text(position, 207, lathe_ui_muted(), TINY);
-            }
-            buttonLegends();
-            refreshDisplay();
-            return;
-        }
         // canvas.createSprite(240, 240);
         // drawBackground(BLACK);
         background();
@@ -410,7 +348,3 @@ static void request_current_file_list() {
 }
 
 FileSelectScene fileSelectScene;
-
-void diagnostic_preview_files(int fixture) {
-    fileSelectScene.diagnosticPreview(fixture);
-}

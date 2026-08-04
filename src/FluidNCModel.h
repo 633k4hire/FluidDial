@@ -50,14 +50,6 @@ extern uint32_t           errorExpire;
 extern bool               inInches;
 extern uint32_t           mySelectedTool;
 
-struct ProbeResult {
-    bool     known      = false;
-    bool     success    = false;
-    pos_t    axes_mm[6] = {};
-    uint8_t  axis_count = 0;
-    uint32_t updated_ms = 0;
-};
-
 struct FluidNcLinkDiagnostics {
     uint32_t received_bytes_last_ms = 0;
     uint32_t timeout_events         = 0;
@@ -89,8 +81,6 @@ char        axisNumToChar(int axis);
 state_t     decode_state_string(const char* state_string);
 const char* decode_error_number(int error_num);
 const char* mode_string();
-const char* current_wcs();
-const ProbeResult& last_probe_result();
 
 bool fnc_is_connected();
 void set_disconnected_state();

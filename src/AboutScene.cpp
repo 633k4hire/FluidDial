@@ -6,7 +6,6 @@
 #include "AboutScene.h"
 #include "BootLog.h"
 #include "MachineProfile.h"
-#include "LatheUi.h"
 #ifdef USE_WIFI
 #    include "SystemScene.h"
 #    include "WiFiConnection.h"
@@ -25,34 +24,30 @@ namespace {
         return round_display && machine_profile_is_lathe();
     }
 
-    const std::string& firmwareVersion() {
-        static const std::string version = [] {
-            std::string raw = git_info ? git_info : "unknown";
-            size_t length = 0;
-            while (length < raw.size() && (isdigit(static_cast<unsigned char>(raw[length])) || raw[length] == '.')) ++length;
-            return length ? raw.substr(0, length) : raw;
-        }();
-        return version;
+    std::string firmwareVersion() {
+        std::string raw = git_info ? git_info : "unknown";
+        size_t length = 0;
+        while (length < raw.size() && (isdigit(static_cast<unsigned char>(raw[length])) || raw[length] == '.')) {
+            ++length;
+        }
+        return length ? raw.substr(0, length) : raw;
     }
 
-    const std::string& firmwareBuild() {
-        static const std::string build = [] {
-            std::string raw = git_info ? git_info : "unknown";
-            bool dirty = raw.size() >= 6 && raw.rfind("-dirty") == raw.size() - 6;
-            if (dirty) raw.resize(raw.size() - 6);
-            size_t dash = raw.rfind('-');
-            std::string value = dash == std::string::npos ? raw : raw.substr(dash + 1);
-            if (value.size() > 8) value.resize(8);
-            return dirty ? value + " dev" : value;
-        }();
-        return build;
+    std::string firmwareBuild() {
+        std::string raw = git_info ? git_info : "unknown";
+        bool dirty = raw.size() >= 6 && raw.rfind("-dirty") == raw.size() - 6;
+        if (dirty) {
+            raw.resize(raw.size() - 6);
+        }
+        size_t dash = raw.rfind('-');
+        std::string build = dash == std::string::npos ? raw : raw.substr(dash + 1);
+        if (build.size() > 8) {
+            build.resize(8);
+        }
+        return dirty ? build + " dev" : build;
     }
 
     void drawAboutLine(int y, const char* value, int color = WHITE) {
-        if (lathe_ui_enabled()) {
-            lathe_ui_badge(30, y, 180, value, color);
-            return;
-        }
         drawOutlinedRect(30, y, 180, 26, NAVY, DARKGREY);
         auto_text(std::string(value ? value : ""), 120, y + 15, 164, color, TINY, middle_center);
     }
@@ -146,39 +141,28 @@ void AboutScene::onStateChange(state_t old_state) {
 }
 void AboutScene::reDisplay() {
     if (useRoundLatheAbout()) {
-        if (lathe_ui_enabled()) {
-            lathe_ui_detail_surface(_round_page == 0 ? "DEVICE" : "CONTROLS");
-        } else {
-            background();
-            centered_text("About", 15, WHITE, SMALL);
-            drawRect(70, 26, 100, 1, 0, DARKGREY);
-        }
+        background();
+        centered_text("About", 15, WHITE, SMALL);
+        drawRect(70, 26, 100, 1, 0, DARKGREY);
 
         if (_round_page == 0) {
-            centered_text("XZACT M5DIAL", 48, lathe_ui_enabled() ? lathe_ui_blue() : GREEN, SMALL);
-            char version[48];
-            char build[48];
-            snprintf(version, sizeof(version), "Firmware %s", firmwareVersion().c_str());
-            snprintf(build, sizeof(build), "Build %s", firmwareBuild().c_str());
-            centered_text(version, 73, WHITE, TINY);
-            centered_text(build, 91, DARKGREY, TINY);
+            centered_text("XZACt M5Dial", 48, GREEN, SMALL);
+            std::string version = "Firmware " + firmwareVersion();
+            std::string build = "Build " + firmwareBuild();
+            centered_text(version.c_str(), 73, WHITE, TINY);
+            centered_text(build.c_str(), 91, DARKGREY, TINY);
 
-            drawAboutLine(108, fnc_is_connected() ? "UART 1M / ONLINE" : "UART 1M / N/C",
-                          fnc_is_connected() ? (lathe_ui_enabled() ? lathe_ui_green() : GREEN) : RED);
+            drawAboutLine(108, fnc_is_connected() ? "UART 1M / Online" : "UART 1M / N/C", fnc_is_connected() ? GREEN : RED);
 #ifdef USE_WIFI
-            char wifi[48];
-            snprintf(wifi, sizeof(wifi), wifi_is_connected() ? "IP %s" : "Wi-Fi Offline", wifi_local_ip());
-            drawAboutLine(139, wifi, wifi_is_connected() ? (lathe_ui_enabled() ? lathe_ui_green() : GREEN)
-                                                                 : (lathe_ui_enabled() ? lathe_ui_muted() : LIGHTGREY));
+            std::string wifi = wifi_is_connected() ? std::string("IP ") + wifi_local_ip() : "Wi-Fi Offline";
+            drawAboutLine(139, wifi.c_str(), wifi_is_connected() ? GREEN : LIGHTGREY);
 #else
             drawAboutLine(139, "Wi-Fi unavailable", DARKGREY);
 #endif
-            char machine[48];
-            snprintf(machine, sizeof(machine), "Machine / %s", my_state_string);
-            drawAboutLine(170, machine, state == Alarm ? RED : state == Idle ? (lathe_ui_enabled() ? lathe_ui_green() : GREEN)
-                                                                                     : (lathe_ui_enabled() ? lathe_ui_amber() : YELLOW));
+            std::string machine = std::string("Machine / ") + my_state_string;
+            drawAboutLine(170, machine.c_str(), state == Alarm ? RED : state == Idle ? GREEN : YELLOW);
         } else {
-            centered_text("OPERATOR MAP", 47, lathe_ui_enabled() ? lathe_ui_blue() : GREEN, SMALL);
+            centered_text("Controls", 47, GREEN, SMALL);
             drawAboutLine(70, "Dial: select/change");
             drawAboutLine(104, "Touch: open/next");
             drawAboutLine(138, "Red/green: context");

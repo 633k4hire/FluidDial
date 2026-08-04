@@ -3,7 +3,6 @@
 
 #include "Scene.h"
 #include "LatheModel.h"
-#include "LatheUi.h"
 #include "MachineProfile.h"
 #include "MachineStateActions.h"
 #include "alarm.h"
@@ -73,71 +72,24 @@ private:
         drawButtonLegends(labels.red, labels.green, center);
     }
 
-    void draw_legacy_lathe_dashboard(state_t shown_state, int shown_alarm, const LatheStatus& lathe) {
-        background();
-        draw_state_pill(shown_state);
-        text(inInches ? "in" : "mm", 187, 27, DARKGREY, TINY, middle_left);
-        DRO dro(23, 48, 194, 35);
-        for (int axis = 0; axis < profile_axis_count(); ++axis) {
-            char axis_char = profile_axis_char(axis);
-            if (axis_char == 'X' || axis_char == 'Z') dro.draw(axis, -1, true);
-        }
-        char summary[40];
-        char tool[8];
-        if (lathe.active_tool > 0) snprintf(tool, sizeof(tool), "T%d", lathe.active_tool);
-        else snprintf(tool, sizeof(tool), "T-");
-        if (lathe.effective_rpm > 0.5f) snprintf(summary, sizeof(summary), "%s / Spindle %.0f", tool, lathe.effective_rpm);
-        else snprintf(summary, sizeof(summary), "%s / Spindle STOP", tool);
-        drawOutlinedRect(30, 130, 180, 30, NAVY, DARKGREY);
-        auto_text(std::string(summary), 120, 147, 164, lathe.effective_rpm > 0.5f ? GREEN : LIGHTGREY, TINY, middle_center);
-        char context[64] = { 0 };
-        int color = LIGHTGREY;
-        if (shown_state == Cycle || shown_state == Hold || shown_state == DoorClosed) {
-            switch (overd_display) {
-                case FRO: snprintf(context, sizeof(context), "Feed override %d%%", myFro); break;
-                case SRO: snprintf(context, sizeof(context), "Spindle override %d%%", mySro); break;
-                case RT_FEED_SPEED: snprintf(context, sizeof(context), "Feed %u / Speed %u", myFeed, mySpeed); break;
-            }
-            color = GREEN;
-        } else if (shown_state == Alarm) {
-            snprintf(context, sizeof(context), "Alarm %d: %s", shown_alarm, alarm_name_short[shown_alarm]);
-            color = RED;
-        } else if (shown_state == Disconnected) {
-            snprintf(context, sizeof(context), "Controller N/C");
-            color = RED;
-        } else if (!_diagnostic_state && lathe_command_recoverable()) {
-            snprintf(context, sizeof(context), "%s", lathe_command_status_text());
-            color = YELLOW;
-        }
-        if (context[0]) {
-            drawOutlinedRect(30, 166, 180, 28, BLACK, color);
-            auto_text(std::string(context), 120, 182, 172, color, TINY, middle_center);
-        }
-        draw_status_buttons();
-        refreshDisplay();
-    }
-
     void draw_lathe_dashboard() {
         const LatheStatus& lathe = lathe_status();
         state_t shown_state = displayState();
         int shown_alarm = displayAlarm();
 
-        if (!lathe_ui_enabled()) {
-            draw_legacy_lathe_dashboard(shown_state, shown_alarm, lathe);
-            return;
+        background();
+        draw_state_pill(shown_state);
+        text(inInches ? "in" : "mm", 187, 27, DARKGREY, TINY, middle_left);
+
+        DRO dro(23, 48, 194, 35);
+        for (int axis = 0; axis < profile_axis_count(); ++axis) {
+            char axis_char = profile_axis_char(axis);
+            if (axis_char == 'X' || axis_char == 'Z') {
+                dro.draw(axis, -1, true);
+            }
         }
 
-        lathe_ui_detail_surface("STATUS");
-        lathe_ui_state_pill(88, 10, shown_state);
-        lathe_ui_badge(30, 44, 64, current_wcs(), lathe_ui_blue());
-        text(inInches ? "IN" : "MM", 206, 55, lathe_ui_muted(), TINY, middle_right);
-
-        for (int axis = 0; axis < profile_axis_count() && axis < 3; ++axis) {
-            int machine_axis = profile_machine_axis(axis);
-            pos_t value = machine_axis >= 0 && machine_axis < 6 ? myAxes[machine_axis] : 0;
-            lathe_ui_dro_row(82 + axis * 29, profile_axis_char(axis), value, axis == 0);
-        }
-
+        drawOutlinedRect(30, 130, 180, 30, NAVY, DARKGREY);
         char tool[12];
         if (lathe.active_tool > 0) {
             snprintf(tool, sizeof(tool), "T%d", lathe.active_tool);
@@ -150,20 +102,23 @@ private:
         } else {
             snprintf(spindle, sizeof(spindle), "Spindle STOP");
         }
-        lathe_ui_value_row(171, "TOOL", tool, lathe.active_tool == 5 ? lathe_ui_coral() : lathe_ui_text());
-        lathe_ui_value_row(188, "SPINDLE", spindle + 8, lathe.effective_rpm > 0.5f ? lathe_ui_green() : lathe_ui_muted());
+        char summary[40];
+        snprintf(summary, sizeof(summary), "%s / %s", tool, spindle);
+        auto_text(std::string(summary), 120, 147, 164,
+                  lathe.effective_rpm > 0.5f ? GREEN : lathe.active_tool == 5 ? ORANGE : LIGHTGREY,
+                  TINY, middle_center);
 
         const char* context = nullptr;
         int context_color = LIGHTGREY;
         char context_buffer[64];
         if (shown_state == Cycle || shown_state == Hold || shown_state == DoorClosed) {
             switch (overd_display) {
-                case FRO: snprintf(context_buffer, sizeof(context_buffer), "FRO %d%% / JOB %d%%", myFro, myPercent); break;
-                case SRO: snprintf(context_buffer, sizeof(context_buffer), "SRO %d%% / JOB %d%%", mySro, myPercent); break;
-                case RT_FEED_SPEED: snprintf(context_buffer, sizeof(context_buffer), "F%u S%u / JOB %d%%", myFeed, mySpeed, myPercent); break;
+                case FRO: snprintf(context_buffer, sizeof(context_buffer), "Feed override %d%%", myFro); break;
+                case SRO: snprintf(context_buffer, sizeof(context_buffer), "Spindle override %d%%", mySro); break;
+                case RT_FEED_SPEED: snprintf(context_buffer, sizeof(context_buffer), "Feed %u / Speed %u", myFeed, mySpeed); break;
             }
             context = context_buffer;
-            context_color = lathe_ui_green();
+            context_color = GREEN;
         } else if (shown_state == Alarm) {
             snprintf(context_buffer, sizeof(context_buffer), "Alarm %d: %s", shown_alarm, alarm_name_short[shown_alarm]);
             context = context_buffer;
@@ -171,16 +126,13 @@ private:
         } else if (shown_state == Disconnected) {
             context = "Controller N/C";
             context_color = RED;
-        } else if (!_diagnostic_state && (lathe_command_pending() || lathe_command_recoverable())) {
+        } else if (!_diagnostic_state && lathe_command_recoverable()) {
             context = lathe_command_status_text();
-            context_color = lathe_command_pending() ? lathe_ui_blue() : lathe_ui_amber();
+            context_color = YELLOW;
         }
         if (context) {
-            lathe_ui_fit_text(context, 120, 207, 174, context_color, TINY, middle_center);
-        } else {
-            char modes[48];
-            snprintf(modes, sizeof(modes), "F%u  S%u  %s", myFeed, mySpeed, mode_string());
-            lathe_ui_fit_text(modes, 120, 207, 174, lathe_ui_muted(), TINY, middle_center);
+            drawOutlinedRect(30, 166, 180, 28, BLACK, context_color);
+            auto_text(std::string(context), 120, 182, 172, context_color, TINY, middle_center);
         }
 
         draw_status_buttons();

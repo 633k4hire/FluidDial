@@ -15,9 +15,6 @@ from pathlib import Path
 from typing import Any
 
 
-TOOL_TYPE_DEFAULTS = ["RightTurn", "LeftTurn", "DrillQuarterInch", "BoringBar", "Probe"]
-
-
 DEFAULT_PROFILE = [
     {"slot": 0, "letter": "X", "machine_axis": 0, "config_path": "$/axes/x"},
     {"slot": 1, "letter": "Y", "machine_axis": 1, "config_path": "$/axes/y"},
@@ -82,46 +79,6 @@ class CommandState:
     started_ms: int = 0
     updated_ms: int = 0
     last_refresh_ms: int = 0
-
-
-@dataclass
-class ProbeResult:
-    known: bool = False
-    success: bool = False
-    axes_mm: tuple[float, ...] = ()
-
-
-def extract_wcs(mode_report: str) -> str:
-    for token in mode_report.strip("[]").split():
-        if token in {"G54", "G55", "G56", "G57", "G58", "G59", "G59.1", "G59.2", "G59.3"}:
-            return token
-    return "--"
-
-
-def parse_probe_report(report: str) -> ProbeResult:
-    if not report.startswith("[PRB:") or not report.endswith("]"):
-        return ProbeResult()
-    body = report[5:-1]
-    coordinates, separator, success = body.rpartition(":")
-    if not separator:
-        return ProbeResult()
-    try:
-        axes = tuple(float(value) for value in coordinates.split(","))
-    except ValueError:
-        return ProbeResult()
-    return ProbeResult(known=True, success=success == "1", axes_mm=axes[:6])
-
-
-def carousel_select(selected: int, delta: int) -> int:
-    return (selected + delta) % 8
-
-
-def load_tool_types(saved: dict[int, str]) -> list[str]:
-    values = TOOL_TYPE_DEFAULTS.copy()
-    for station, tool_type in saved.items():
-        if 1 <= station <= 5:
-            values[station - 1] = tool_type
-    return values
 
 
 M6_TIMEOUT_MS = 30_000
@@ -441,29 +398,6 @@ def assert_command_lifecycle() -> None:
     assert touch.timed_out and touch.recoverable and touch.message == "Timed out"
 
 
-def assert_live_ui_contract() -> None:
-    assert extract_wcs("[GC:G0 G54 G17 G21 G90]") == "G54"
-    assert extract_wcs("[GC:G1 G59.3 G18 G95]") == "G59.3"
-    assert extract_wcs("[GC:G0 G17 G21]") == "--"
-
-    hit = parse_probe_report("[PRB:1.250,-2.500,0.000:1]")
-    assert hit.known and hit.success and hit.axes_mm == (1.25, -2.5, 0.0)
-    miss = parse_probe_report("[PRB:4.000,5.000:0]")
-    assert miss.known and not miss.success and miss.axes_mm == (4.0, 5.0)
-    assert not parse_probe_report("not-a-probe").known
-
-    selected = 0
-    for delta in (1, 1, -1, 8, -9):
-        selected = carousel_select(selected, delta)
-    assert selected == 0
-    assert [carousel_select(0, delta) for delta in range(8)] == list(range(8))
-
-    assert load_tool_types({}) == TOOL_TYPE_DEFAULTS
-    assert load_tool_types({2: "Parting"}) == ["RightTurn", "Parting", "DrillQuarterInch", "BoringBar", "Probe"]
-    # An upgrade re-applies defaults only to missing keys, never over a saved edit.
-    assert load_tool_types({1: "Thread", 5: "Unset"})[0::4] == ["Thread", "Unset"]
-
-
 def assert_maijker_build_contract() -> None:
     root = Path(__file__).resolve().parents[1]
     platformio = (root / "platformio.ini").read_text(encoding="utf-8")
@@ -502,9 +436,6 @@ def assert_maijker_build_contract() -> None:
     health = (root / "src" / "MachineHealthScene.cpp").read_text(encoding="utf-8")
     actions = (root / "src" / "MachineStateActions.cpp").read_text(encoding="utf-8")
     diagnostic_screens = (root / "src" / "DiagnosticScreens.cpp").read_text(encoding="utf-8")
-    lathe_ui = (root / "src" / "LatheUi.cpp").read_text(encoding="utf-8")
-    lathe_ui_model = (root / "src" / "LatheUiModel.cpp").read_text(encoding="utf-8")
-    fluidnc_header = (root / "src" / "FluidNCModel.h").read_text(encoding="utf-8")
     assert "void reDisplay() override" in menu
     assert "syncIconAvailability();" in menu
     assert "operator_basic_motion_actions_available()" in menu
@@ -518,12 +449,10 @@ def assert_maijker_build_contract() -> None:
     # surfaces. Safety actions remain centralized so labels and behavior agree.
     assert "push_scene(&machineHealthScene)" in menu
     assert 'drawButtonLegends("Back", "Settings", "Next")' in about
-    assert "lathe_ui_state_pill(88, 10, shown_state)" in status
-    assert 'text(inInches ? "IN" : "MM"' in status
+    assert "draw_state_pill(shown_state)" in status
+    assert 'text(inInches ? "in" : "mm"' in status
     lathe_dashboard = status.split("void draw_lathe_dashboard()", 1)[1].split("public:", 1)[0]
-    assert "axis < profile_axis_count() && axis < 3" in lathe_dashboard
-    assert "current_wcs()" in lathe_dashboard
-    assert "myPercent" in lathe_dashboard
+    assert "axis_char == 'X' || axis_char == 'Z'" in lathe_dashboard
     assert "Thread unsafe" not in status
     assert "ENC OFF" not in status
     for page in ("drawOverview", "drawAlarm", "drawReadiness", "drawConnections"):
@@ -537,35 +466,8 @@ def assert_maijker_build_contract() -> None:
         "health-alarm-preview",
         "health-encoder-fault",
         "status-disconnected",
-        "home-unhomed",
-        "home-homed",
-        "probe-live",
-        "probe-success",
-        "probe-failure",
-        "tools-default-types",
-        "files-loading",
-        "files-empty",
-        "files-error",
-        "macros-loading",
-        "macros-empty",
-        "macros-error",
     ):
         assert f'"{screen_id}"' in diagnostic_screens
-
-    assert "bool lathe_ui_enabled()" in lathe_ui
-    assert "MAIJKER_XZACT_LATHE" in lathe_ui
-    assert "lathe_ui_orbital_rail" in lathe_ui
-    assert "_animation_phase = 3" in menu
-    assert "Menu::rotate(delta)" in menu
-    assert "LINK REQUIRED" in menu
-    assert "show_probe(const pos_t* axes" in fluidnc
-    assert "show_probe_pin(bool on)" in fluidnc
-    assert "const char* current_wcs()" in fluidnc_header
-    assert "const ProbeResult& last_probe_result()" in fluidnc_header
-    for expected in ("RightTurn", "LeftTurn", "DrillQuarterInch", "BoringBar", "Probe"):
-        assert f"LatheToolType::{expected}" in lathe_ui_model
-    assert 'nvs_get_i32(s_prefs, key, &value)' in lathe_ui_model
-    assert 'nvs_set_i32(s_prefs, key, static_cast<int>(type))' in lathe_ui_model
 
     # The 1 Mbps link must be able to absorb a complete multi-line ESP421
     # response without a sticky parser failure after homing.
@@ -617,7 +519,6 @@ def main() -> None:
     assert_fallbacks()
     assert_command_results()
     assert_command_lifecycle()
-    assert_live_ui_contract()
     assert_maijker_build_contract()
     print("lathe protocol harness: all checks passed")
 

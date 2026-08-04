@@ -27,11 +27,6 @@ void diagnostic_preview_tools(int selection);
 void diagnostic_preview_about(int page);
 void diagnostic_preview_machine_health(int selection);
 void diagnostic_preview_status(int fixture);
-void diagnostic_preview_homing_state(int fixture);
-void diagnostic_preview_probe_state(int fixture);
-void diagnostic_preview_tool_defaults(int fixture);
-void diagnostic_preview_files(int fixture);
-void diagnostic_preview_macros(int fixture);
 
 #ifdef USE_WIFI
 extern Scene wifiSetupScene;
@@ -85,8 +80,6 @@ namespace {
         { "home-all", &homingScene, diagnostic_preview_homing, 0 },
         { "home-x", &homingScene, diagnostic_preview_homing, 1 },
         { "home-z", &homingScene, diagnostic_preview_homing, 2 },
-        { "home-unhomed", &homingScene, diagnostic_preview_homing_state, 0 },
-        { "home-homed", &homingScene, diagnostic_preview_homing_state, 1 },
         { "jog-x", &multiJogScene, diagnostic_preview_jog, 0 },
         { "jog-z", &multiJogScene, diagnostic_preview_jog, 1 },
         { "jog-xz", &multiJogScene, diagnostic_preview_jog, 2 },
@@ -95,28 +88,15 @@ namespace {
         { "probe-feed", &probingScene, diagnostic_preview_probe, 2 },
         { "probe-retract", &probingScene, diagnostic_preview_probe, 3 },
         { "probe-axis", &probingScene, diagnostic_preview_probe, 4 },
-        { "probe-live", &probingScene, diagnostic_preview_probe_state, 1 },
-        { "probe-success", &probingScene, diagnostic_preview_probe_state, 2 },
-        { "probe-failure", &probingScene, diagnostic_preview_probe_state, 3 },
         { "tools-list", &toolchangeScene, diagnostic_preview_tools, 0 },
         { "tools-setup", &toolchangeScene, diagnostic_preview_tools, 1 },
         { "tools-touch-off", &toolchangeScene, diagnostic_preview_tools, 2 },
-        { "tools-default-types", &toolchangeScene, diagnostic_preview_tool_defaults, 0 },
 #ifdef USE_WMB_FSS
         { "files", &wmbFileSelectScene, nullptr, 0 },
-        { "files-loading", &wmbFileSelectScene, diagnostic_preview_files, 1 },
-        { "files-empty", &wmbFileSelectScene, diagnostic_preview_files, 2 },
-        { "files-error", &wmbFileSelectScene, diagnostic_preview_files, 3 },
 #else
         { "files", &fileSelectScene, nullptr, 0 },
-        { "files-loading", &fileSelectScene, diagnostic_preview_files, 1 },
-        { "files-empty", &fileSelectScene, diagnostic_preview_files, 2 },
-        { "files-error", &fileSelectScene, diagnostic_preview_files, 3 },
 #endif
         { "macros", &macroMenu, nullptr, 0 },
-        { "macros-loading", &macroMenu, diagnostic_preview_macros, 1 },
-        { "macros-empty", &macroMenu, diagnostic_preview_macros, 2 },
-        { "macros-error", &macroMenu, diagnostic_preview_macros, 3 },
         { "about", &aboutScene, nullptr, 0 },
         { "about-device", &aboutScene, diagnostic_preview_about, 0 },
         { "about-controls", &aboutScene, diagnostic_preview_about, 1 },

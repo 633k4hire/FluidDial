@@ -13,7 +13,6 @@ enum fontnum_t {
     MEDIUM      = 2,
     LARGE       = 3,
     MEDIUM_MONO = 4,
-    SMALL_MONO  = 5,
 };
 
 // adjusts text to fit in (w) display area. reduces font size until it. tryfonts::false just uses fontnum

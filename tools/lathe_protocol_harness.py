@@ -502,6 +502,7 @@ def assert_maijker_build_contract() -> None:
     health = (root / "src" / "MachineHealthScene.cpp").read_text(encoding="utf-8")
     actions = (root / "src" / "MachineStateActions.cpp").read_text(encoding="utf-8")
     diagnostic_screens = (root / "src" / "DiagnosticScreens.cpp").read_text(encoding="utf-8")
+    drawing = (root / "src" / "Drawing.cpp").read_text(encoding="utf-8")
     lathe_ui = (root / "src" / "LatheUi.cpp").read_text(encoding="utf-8")
     lathe_ui_model = (root / "src" / "LatheUiModel.cpp").read_text(encoding="utf-8")
     fluidnc_header = (root / "src" / "FluidNCModel.h").read_text(encoding="utf-8")
@@ -517,8 +518,8 @@ def assert_maijker_build_contract() -> None:
     # The round display has separate operator, health, and device-information
     # surfaces. Safety actions remain centralized so labels and behavior agree.
     assert "push_scene(&machineHealthScene)" in menu
-    assert 'drawButtonLegends("Back", "Settings", "Next")' in about
-    assert "lathe_ui_state_pill(88, 10, shown_state)" in status
+    assert 'lathe_ui_action_legends("BACK", "SETTINGS", "NEXT")' in about
+    assert 'lathe_ui_detail_surface("STATUS")' in status
     assert 'text(inInches ? "IN" : "MM"' in status
     lathe_dashboard = status.split("void draw_lathe_dashboard()", 1)[1].split("public:", 1)[0]
     assert "axis < profile_axis_count() && axis < 3" in lathe_dashboard
@@ -555,6 +556,15 @@ def assert_maijker_build_contract() -> None:
     assert "bool lathe_ui_enabled()" in lathe_ui
     assert "MAIJKER_XZACT_LATHE" in lathe_ui
     assert "lathe_ui_orbital_rail" in lathe_ui
+    assert "RailAngles[] = { 66, 43, 21, 0, -21, -43, -66 }" in lathe_ui
+    assert "RailTouch    = 20" in lathe_ui
+    assert "lathe_ui_nav_icon(static_cast<LatheNavItem>(item), sx, sy, UiText, 2)" in lathe_ui
+    assert "void lathe_ui_round_clip()" in lathe_ui
+    assert "lathe_ui_round_clip();" in menu
+    assert "if (lathe_ui_enabled()) lathe_ui_round_clip();" in drawing
+    assert "diagnostic_preview_main_menu_state(int encoded)" in menu
+    assert "diagnostic_step_main_menu(int delta)" in menu
+    assert "diagnostic_clear_main_menu_state()" in menu
     assert "_animation_phase = 3" in menu
     assert "Menu::rotate(delta)" in menu
     assert "LINK REQUIRED" in menu

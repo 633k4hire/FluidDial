@@ -10,6 +10,25 @@
 extern Scene statusScene;
 extern Scene filePreviewScene;
 
+namespace {
+void draw_macro_state_icon(int y, bool loading, bool error) {
+    const int color = error ? RED : loading ? lathe_ui_amber() : lathe_ui_blue();
+    canvas.drawCircle(120, y, 20, color);
+    canvas.drawCircle(120, y, 19, color);
+    if (error) {
+        canvas.drawLine(111, y - 9, 129, y + 9, color);
+        canvas.drawLine(112, y - 9, 130, y + 9, color);
+        canvas.drawLine(129, y - 9, 111, y + 9, color);
+        canvas.drawLine(130, y - 9, 112, y + 9, color);
+    } else if (loading) {
+        canvas.drawArc(120, y, 13, 10, 35, 285, color);
+        canvas.fillTriangle(130, y - 8, 135, y - 9, 133, y - 4, color);
+    } else {
+        canvas.fillTriangle(116, y - 10, 116, y + 10, 130, y, color);
+    }
+}
+}
+
 void MacroItem::invoke(void* arg) {
     if (arg && strcmp((char*)arg, "Run") == 0) {
         if (_filename.rfind("cmd:", 0) == 0) {
@@ -66,13 +85,25 @@ private:
     bool        _reading = true;
     std::string _error_string;
     int         _diagnostic_fixture = -1;
+    bool        _diagnostic_snapshot_active = false;
+    int         _saved_diagnostic_fixture = -1;
 
 public:
     MacroMenu() : Menu("Macros") {}
 
     void diagnosticPreview(int fixture) {
+        if (!_diagnostic_snapshot_active) {
+            _saved_diagnostic_fixture = _diagnostic_fixture;
+            _diagnostic_snapshot_active = true;
+        }
         _diagnostic_fixture = fixture;
         reDisplay();
+    }
+
+    void diagnosticRestore() {
+        if (!_diagnostic_snapshot_active) return;
+        _diagnostic_fixture = _saved_diagnostic_fixture;
+        _diagnostic_snapshot_active = false;
     }
 
     const std::string& selected_name() { return _items[_selected]->name(); }
@@ -128,32 +159,51 @@ public:
         if (lathe_ui_enabled()) {
             lathe_ui_detail_surface("MACROS");
             bool fixture_loading = _diagnostic_fixture == 1;
-            bool fixture_empty = _diagnostic_fixture == 2;
-            bool fixture_error = _diagnostic_fixture == 3;
-            if (fixture_loading || fixture_empty || fixture_error || num_items() == 0) {
-                if (fixture_error || _error_string.length()) {
-                    lathe_ui_fit_text(fixture_error ? "MACRO LOAD ERROR" : _error_string.c_str(), 120, 114, 170, RED, SMALL, middle_center);
+            bool fixture_empty   = _diagnostic_fixture == 2;
+            bool fixture_error   = _diagnostic_fixture == 3;
+            bool error           = fixture_error || _error_string.length();
+            bool loading         = !error && (fixture_loading || (_diagnostic_fixture < 0 && _reading));
+            bool empty           = !error && !loading && (fixture_empty || num_items() == 0);
+            if (error || loading || empty) {
+                draw_macro_state_icon(100, loading, error);
+                if (error) {
+                    lathe_ui_fit_text(fixture_error ? "MACRO LOAD ERROR" : _error_string.c_str(),
+                                      120, 136, 168, RED, SMALL, middle_center);
+                    centered_text("REFRESH TO RETRY", 158, lathe_ui_muted(), TINY);
+                } else if (loading) {
+                    centered_text("LOADING MACROS", 136, lathe_ui_amber(), SMALL);
+                    centered_text("READING DEFINITIONS", 158, lathe_ui_muted(), TINY);
                 } else {
-                    bool loading = fixture_loading || (_diagnostic_fixture < 0 && _reading);
-                    centered_text(loading ? "LOADING MACROS" : "NO MACROS", 110,
-                                  loading ? lathe_ui_amber() : lathe_ui_muted(), SMALL);
-                    if (!loading) centered_text("ADD FILES TO SD", 143, lathe_ui_muted(), TINY);
+                    centered_text("NO MACROS", 136, lathe_ui_muted(), SMALL);
+                    centered_text("REFRESH TO SEARCH", 158, lathe_ui_muted(), TINY);
                 }
             } else {
                 int first = _selected - 2;
-                int last = _selected + 2;
+                int last  = _selected + 2;
                 for (int index = first; index <= last; ++index) {
                     if (index < 0 || index >= num_items()) continue;
-                    int y = 76 + (index - first) * 29;
+                    int  y        = 72 + (index - first) * 26;
                     bool selected = index == _selected;
-                    if (selected) canvas.drawRoundRect(26, y - 13, 188, 26, 7, lathe_ui_blue());
-                    lathe_ui_fit_text(_items[index]->name().c_str(), 38, y, 164, selected ? lathe_ui_text() : lathe_ui_muted());
+                    if (selected) {
+                        canvas.fillRoundRect(32, y - 11, 176, 23, 7, lathe_ui_panel_alt());
+                        canvas.drawRoundRect(32, y - 11, 176, 23, 7, lathe_ui_blue());
+                        canvas.drawRoundRect(33, y - 10, 174, 21, 6, lathe_ui_blue());
+                    }
+                    canvas.drawCircle(43, y, 7, selected ? lathe_ui_blue() : lathe_ui_muted());
+                    canvas.drawCircle(43, y, 6, selected ? lathe_ui_blue() : lathe_ui_muted());
+                    canvas.fillTriangle(41, y - 3, 41, y + 3, 46, y,
+                                        selected ? lathe_ui_blue() : lathe_ui_muted());
+                    lathe_ui_fit_text(_items[index]->name().c_str(), 58, y, 142,
+                                      selected ? lathe_ui_text() : lathe_ui_muted());
                 }
                 char position[24];
                 snprintf(position, sizeof(position), "%d / %d", _selected + 1, num_items());
-                centered_text(position, 207, lathe_ui_muted(), TINY);
+                centered_text(position, 190, lathe_ui_muted(), TINY);
             }
-            buttonLegends();
+            const char* red_label   = loading ? "" : "REFRESH";
+            const char* green_label = (state == Idle && num_items() && !loading && !empty && !error) ? "LOAD" : "";
+            const char* dial_label  = (state == Idle && num_items() && !loading && !empty && !error) ? "RUN" : "";
+            lathe_ui_action_legends(red_label, green_label, dial_label);
             refreshDisplay();
             return;
         }
@@ -254,4 +304,8 @@ public:
 
 void diagnostic_preview_macros(int fixture) {
     static_cast<MacroMenu&>(macroMenu).diagnosticPreview(fixture);
+}
+
+void diagnostic_restore_macros_preview() {
+    static_cast<MacroMenu&>(macroMenu).diagnosticRestore();
 }

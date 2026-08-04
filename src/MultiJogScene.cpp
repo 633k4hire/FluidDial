@@ -120,6 +120,8 @@ private:
     int          max_index() { return 6; }  // 10^3 = 1000;
     int          min_index() { return 0; }  // 10^3 = 1000;
     int          _selected_mask = 1 << 0;
+    bool         _diagnostic_snapshot_active = false;
+    int          _saved_selected_mask = 1 << 0;
     const int    num_axes       = 3;
     bool         _cancelling    = false;
     bool         _cancel_held   = false;
@@ -185,13 +187,22 @@ public:
     MultiJogScene() : Scene("Jog", 4, jog_help_text) {}
 
     void diagnosticPreview(int selection) {
+        if (!_diagnostic_snapshot_active) {
+            _saved_selected_mask = _selected_mask;
+            _diagnostic_snapshot_active = true;
+        }
         if (selection == 2) {
             _selected_mask = (1 << 0) | (1 << 1);
         } else {
             _selected_mask = 1 << selection;
         }
-        reset_jog_runtime();
         reDisplay();
+    }
+
+    void diagnosticRestore() {
+        if (!_diagnostic_snapshot_active) return;
+        _selected_mask = _saved_selected_mask;
+        _diagnostic_snapshot_active = false;
     }
 
     e4_t distance(int axis) { return e4_power10(_dist_index[axis] - num_digits()); }
@@ -286,28 +297,31 @@ public:
     void reDisplay() {
         if (lathe_ui_enabled()) {
             lathe_ui_detail_surface("JOG");
-            lathe_ui_badge(29, 44, 82, _dynamic_mode ? "DYNAMIC" : "PRECISE", lathe_ui_blue());
+            lathe_ui_badge(79, 53, 82, _dynamic_mode ? "DYNAMIC" : "PRECISE", lathe_ui_blue());
             if (state != Jog && _cancelling) _cancelling = false;
             if (_cancelling || _cancel_held) {
-                centered_text("JOG CANCELED", 116, RED, SMALL);
+                centered_text("JOG CANCELED", 120, RED, SMALL);
+                lathe_ui_footer_banner("RELEASE TO RESET", RED);
             } else {
                 for (int axis = 0; axis < 2; ++axis) {
                     int machine_axis = profile_machine_axis(axis);
                     pos_t value = machine_axis >= 0 && machine_axis < 6 ? myAxes[machine_axis] : 0;
-                    lathe_ui_dro_row(88 + axis * 43, profile_axis_char(axis), value, selected(axis));
+                    static const int dro_y[2] = { 92, 128 };
+                    lathe_ui_dro_row(dro_y[axis], profile_axis_char(axis), value, selected(axis));
                 }
                 int active_axis = selected(1) ? 1 : 0;
-                lathe_ui_value_row(169, "ACTIVE AXIS", selected(0) && selected(1) ? "X + Z" : profile_axis_cstr(active_axis), lathe_ui_blue());
-                lathe_ui_value_row(191, "INCREMENT", e4_to_cstr(distance(active_axis), 4), lathe_ui_text());
-                if (state == Jog) centered_text("TOUCH TO CANCEL", 209, lathe_ui_amber(), TINY);
-                else {
+                lathe_ui_value_row(164, "ACTIVE AXIS", selected(0) && selected(1) ? "X + Z" : profile_axis_cstr(active_axis), lathe_ui_blue());
+                if (state == Jog) {
+                    lathe_ui_footer_banner("TOUCH TO CANCEL", lathe_ui_amber());
+                } else {
+                    lathe_ui_value_row(185, "INCREMENT", e4_to_cstr(distance(active_axis), 4), lathe_ui_text());
                     char dial_legend[10] = "Zero";
                     size_t length = 4;
                     for (int axis = 0; axis < num_axes && length + 1 < sizeof(dial_legend); ++axis) {
                         if (selected(axis)) dial_legend[length++] = profile_axis_char(axis);
                     }
                     dial_legend[length] = '\0';
-                    drawButtonLegends("Jog-", "Jog+", dial_legend);
+                    lathe_ui_action_legends("Jog-", "Jog+", dial_legend);
                 }
             }
             refreshDisplay();
@@ -869,6 +883,10 @@ public:
 
 void diagnostic_preview_jog(int selection) {
     multiJogScene.diagnosticPreview(selection);
+}
+
+void diagnostic_restore_jog_preview() {
+    multiJogScene.diagnosticRestore();
 }
 
 bool jog_dynamic_mode() { return multiJogScene.dynamicMode(); }

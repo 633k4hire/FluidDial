@@ -18,6 +18,49 @@ class FileSelectScene;
 static FileSelectScene* pending_file_select_scene = nullptr;
 static void request_current_file_list();
 
+namespace {
+void draw_file_state_icon(int y, bool loading, bool error) {
+    const int color = error ? RED : loading ? lathe_ui_amber() : lathe_ui_blue();
+    if (error) {
+        // SD-card silhouette with a fault mark.
+        canvas.drawRect(104, y - 20, 32, 40, color);
+        canvas.drawRect(105, y - 19, 30, 38, color);
+        canvas.fillTriangle(104, y - 20, 116, y - 20, 104, y - 8, lathe_ui_panel());
+        canvas.drawLine(120, y - 8, 120, y + 6, color);
+        canvas.drawLine(121, y - 8, 121, y + 6, color);
+        canvas.fillCircle(120, y + 13, 2, color);
+        return;
+    }
+
+    // Folder silhouette. The two outlines keep every edge at least 2 px.
+    canvas.drawRoundRect(99, y - 13, 42, 30, 4, color);
+    canvas.drawRoundRect(100, y - 12, 40, 28, 3, color);
+    canvas.drawLine(101, y - 14, 101, y - 20, color);
+    canvas.drawLine(102, y - 14, 102, y - 19, color);
+    canvas.drawLine(102, y - 20, 117, y - 20, color);
+    canvas.drawLine(102, y - 19, 117, y - 19, color);
+    canvas.drawLine(117, y - 20, 123, y - 13, color);
+    canvas.drawLine(117, y - 19, 122, y - 13, color);
+    if (loading) {
+        canvas.drawArc(120, y + 2, 10, 8, 30, 250, color);
+        canvas.fillTriangle(128, y - 5, 132, y - 7, 131, y - 2, color);
+    }
+}
+
+void draw_file_kind_icon(int x, int y, bool directory, int color) {
+    if (directory) {
+        canvas.drawRoundRect(x - 8, y - 6, 17, 13, 2, color);
+        canvas.drawRoundRect(x - 7, y - 5, 15, 11, 1, color);
+        canvas.drawLine(x - 7, y - 7, x - 1, y - 7, color);
+        canvas.drawLine(x - 7, y - 6, x - 1, y - 6, color);
+    } else {
+        canvas.drawRect(x - 6, y - 8, 12, 16, color);
+        canvas.drawRect(x - 5, y - 7, 10, 14, color);
+        canvas.drawLine(x + 1, y - 7, x + 5, y - 3, color);
+    }
+}
+}
+
 class FileSelectScene : public Scene {
 private:
     int              _selected_file = 0;
@@ -28,6 +71,8 @@ private:
     bool             _reading = false;
     std::string      _error_string;
     int              _diagnostic_fixture = -1;
+    bool             _diagnostic_snapshot_active = false;
+    int              _saved_diagnostic_fixture = -1;
 
     const char* format_size(size_t size) {
         const int   buflen = 30;
@@ -50,8 +95,18 @@ public:
     FileSelectScene() : Scene("Files", 4) {}
 
     void diagnosticPreview(int fixture) {
+        if (!_diagnostic_snapshot_active) {
+            _saved_diagnostic_fixture = _diagnostic_fixture;
+            _diagnostic_snapshot_active = true;
+        }
         _diagnostic_fixture = fixture;
         reDisplay();
+    }
+
+    void diagnosticRestore() {
+        if (!_diagnostic_snapshot_active) return;
+        _diagnostic_fixture = _saved_diagnostic_fixture;
+        _diagnostic_snapshot_active = false;
     }
 
     void onEntry(void* arg) {
@@ -218,33 +273,57 @@ public:
     void showFiles() {
         if (lathe_ui_enabled()) {
             lathe_ui_detail_surface("FILES");
-            lathe_ui_fit_text(dirName.c_str(), 120, 50, 160, lathe_ui_blue(), TINY, middle_center);
-            bool fixture_error = _diagnostic_fixture == 3;
-            bool fixture_empty = _diagnostic_fixture == 2;
+            lathe_ui_fit_text(dirName.c_str(), 120, 58, 152, lathe_ui_blue(), TINY, middle_center);
+            bool fixture_error   = _diagnostic_fixture == 3;
+            bool fixture_empty   = _diagnostic_fixture == 2;
             bool fixture_loading = _diagnostic_fixture == 1;
-            if (fixture_error || !_error_string.empty()) {
-                lathe_ui_fit_text(fixture_error ? "SD CARD ERROR" : _error_string.c_str(), 120, 115, 165, RED, SMALL, middle_center);
-            } else if (fixture_empty || fixture_loading || fileVector.empty()) {
-                bool loading = fixture_loading || (_diagnostic_fixture < 0 && _reading);
-                centered_text(loading ? "LOADING SD" : "NO FILES", 112,
-                              loading ? lathe_ui_amber() : lathe_ui_muted(), SMALL);
+            bool error           = fixture_error || !_error_string.empty();
+            bool loading         = !error && (fixture_loading || (_diagnostic_fixture < 0 && _reading));
+            bool empty           = !error && !loading && (fixture_empty || fileVector.empty());
+            if (error || loading || empty) {
+                draw_file_state_icon(100, loading, error);
+                if (error) {
+                    lathe_ui_fit_text(fixture_error ? "SD CARD ERROR" : _error_string.c_str(),
+                                      120, 136, 168, RED, SMALL, middle_center);
+                    centered_text("CHECK CARD / LINK", 158, lathe_ui_muted(), TINY);
+                } else if (loading) {
+                    centered_text("LOADING SD", 136, lathe_ui_amber(), SMALL);
+                    centered_text("READING DIRECTORY", 158, lathe_ui_muted(), TINY);
+                } else {
+                    centered_text("NO FILES", 136, lathe_ui_muted(), SMALL);
+                    centered_text("ADD FILES TO SD", 158, lathe_ui_muted(), TINY);
+                }
             } else {
                 int first = _selected_file - 2;
-                int last = _selected_file + 2;
+                int last  = _selected_file + 2;
                 for (int index = first; index <= last; ++index) {
                     if (index < 0 || index >= static_cast<int>(fileVector.size())) continue;
-                    int y = 78 + (index - first) * 27;
+                    int  y        = 74 + (index - first) * 25;
                     bool selected = index == _selected_file;
-                    if (selected) canvas.drawRoundRect(22, y - 12, 196, 24, 7, lathe_ui_blue());
-                    const char* kind = fileVector[index].isDir() ? "DIR" : "FILE";
-                    text(kind, 31, y, selected ? lathe_ui_blue() : lathe_ui_muted(), TINY, middle_left);
-                    lathe_ui_fit_text(fileVector[index].fileName.c_str(), 68, y, 132, lathe_ui_text());
+                    int  color    = selected ? lathe_ui_blue() : lathe_ui_muted();
+                    if (selected) {
+                        canvas.fillRoundRect(32, y - 11, 176, 22, 7, lathe_ui_panel_alt());
+                        canvas.drawRoundRect(32, y - 11, 176, 22, 7, lathe_ui_blue());
+                        canvas.drawRoundRect(33, y - 10, 174, 20, 6, lathe_ui_blue());
+                    }
+                    draw_file_kind_icon(42, y, fileVector[index].isDir(), color);
+                    lathe_ui_fit_text(fileVector[index].fileName.c_str(), 58, y, 142,
+                                      selected ? lathe_ui_text() : lathe_ui_muted());
                 }
                 char position[24];
                 snprintf(position, sizeof(position), "%d / %u", _selected_file + 1, static_cast<unsigned>(fileVector.size()));
-                centered_text(position, 207, lathe_ui_muted(), TINY);
+                centered_text(position, 190, lathe_ui_muted(), TINY);
             }
-            buttonLegends();
+
+            const char* green_label = "";
+            const char* red_label   = "";
+            if (state == Idle && !loading) {
+                red_label = dirLevel ? "UP" : "REFRESH";
+                if (fileVector.size() && !empty && !error) {
+                    green_label = fileVector[_selected_file].isDir() ? "OPEN" : "LOAD";
+                }
+            }
+            lathe_ui_action_legends(red_label, green_label, "BACK");
             refreshDisplay();
             return;
         }
@@ -413,4 +492,8 @@ FileSelectScene fileSelectScene;
 
 void diagnostic_preview_files(int fixture) {
     fileSelectScene.diagnosticPreview(fixture);
+}
+
+void diagnostic_restore_files_preview() {
+    fileSelectScene.diagnosticRestore();
 }

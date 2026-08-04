@@ -6,6 +6,8 @@
 
 class SystemScene : public Scene {
     int _selected = 0;
+    bool _diagnostic_snapshot_active = false;
+    int  _saved_selected = 0;
 
 public:
     SystemScene() : Scene("System", 4) {}
@@ -18,6 +20,7 @@ public:
     void onTouchClick() override;
     void reDisplay() override;
     void diagnosticPreview(int selection);
+    void diagnosticRestore();
 
 private:
     void activateSelected();

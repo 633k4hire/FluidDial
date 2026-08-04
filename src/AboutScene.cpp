@@ -56,6 +56,40 @@ namespace {
         drawOutlinedRect(30, y, 180, 26, NAVY, DARKGREY);
         auto_text(std::string(value ? value : ""), 120, y + 15, 164, color, TINY, middle_center);
     }
+
+    void drawLatheInfoRow(int y, const char* label, const char* value, int value_color) {
+        canvas.fillRoundRect(36, y, 168, 23, 6, lathe_ui_panel_alt());
+        canvas.drawRoundRect(36, y, 168, 23, 6, lathe_ui_muted());
+        canvas.drawRoundRect(37, y + 1, 166, 21, 5, lathe_ui_muted());
+        text(label, 45, y + 13, lathe_ui_muted(), TINY, middle_left);
+        lathe_ui_fit_text(value, 195, y + 13, 105, value_color, TINY, middle_right);
+    }
+
+    void drawControlIcon(int kind, int x, int y, int color) {
+        if (kind == 0) {
+            canvas.drawCircle(x, y, 11, color);
+            canvas.drawCircle(x, y, 10, color);
+            canvas.drawArc(x, y, 16, 14, 210, 335, color);
+            canvas.fillTriangle(x + 14, y - 8, x + 18, y - 8, x + 16, y - 3, color);
+        } else if (kind == 1) {
+            canvas.drawRoundRect(x - 9, y - 12, 18, 24, 4, color);
+            canvas.drawRoundRect(x - 8, y - 11, 16, 22, 3, color);
+            canvas.fillCircle(x, y + 7, 2, color);
+            canvas.drawLine(x + 11, y - 5, x + 16, y - 1, color);
+            canvas.drawLine(x + 11, y - 4, x + 15, y, color);
+        } else {
+            canvas.fillCircle(x - 7, y, 6, RED);
+            canvas.fillCircle(x + 7, y, 6, lathe_ui_green());
+            canvas.drawCircle(x - 7, y, 7, lathe_ui_text());
+            canvas.drawCircle(x + 7, y, 7, lathe_ui_text());
+        }
+    }
+
+    void drawControlRow(int y, int icon, const char* label, const char* detail) {
+        drawControlIcon(icon, 51, y, lathe_ui_blue());
+        text(label, 73, y - 5, lathe_ui_text(), TINY, middle_left);
+        lathe_ui_fit_text(detail, 73, y + 9, 132, lathe_ui_muted(), TINY, middle_left);
+    }
 }
 
 void AboutScene::onEntry(void* arg) {
@@ -148,6 +182,33 @@ void AboutScene::reDisplay() {
     if (useRoundLatheAbout()) {
         if (lathe_ui_enabled()) {
             lathe_ui_detail_surface(_round_page == 0 ? "DEVICE" : "CONTROLS");
+            if (_round_page == 0) {
+                centered_text("XZACT M5DIAL", 59, lathe_ui_blue(), SMALL);
+
+                char firmware[48];
+                snprintf(firmware, sizeof(firmware), "%s / %s", firmwareVersion().c_str(), firmwareBuild().c_str());
+                drawLatheInfoRow(68, "FIRMWARE", firmware, lathe_ui_text());
+                drawLatheInfoRow(96, "UART", fnc_is_connected() ? "1M / ONLINE" : "1M / N/C",
+                                 fnc_is_connected() ? lathe_ui_green() : RED);
+#ifdef USE_WIFI
+                char wifi[48];
+                snprintf(wifi, sizeof(wifi), wifi_is_connected() ? "%s" : "OFFLINE", wifi_local_ip());
+                drawLatheInfoRow(124, "WI-FI", wifi,
+                                 wifi_is_connected() ? lathe_ui_green() : lathe_ui_muted());
+#else
+                drawLatheInfoRow(124, "WI-FI", "UNAVAILABLE", lathe_ui_muted());
+#endif
+                drawLatheInfoRow(152, "MACHINE", my_state_string,
+                                 state == Alarm ? RED : state == Idle ? lathe_ui_green() : lathe_ui_amber());
+            } else {
+                drawControlRow(76, 0, "DIAL", "ROTATE TO SELECT / CHANGE");
+                drawControlRow(116, 1, "TOUCH", "OPEN / NEXT");
+                drawControlRow(156, 2, "BUTTONS", "CONTEXT ACTIONS");
+                centered_text("FLUIDDIAL CONTRIBUTORS", 183, lathe_ui_muted(), TINY);
+            }
+            lathe_ui_action_legends("BACK", "SETTINGS", "NEXT");
+            refreshDisplay();
+            return;
         } else {
             background();
             centered_text("About", 15, WHITE, SMALL);
@@ -282,10 +343,24 @@ int AboutScene::getBrightness() {
 AboutScene aboutScene;
 
 void AboutScene::diagnosticPreview(int page) {
+    if (!_diagnostic_snapshot_active) {
+        _saved_round_page = _round_page;
+        _diagnostic_snapshot_active = true;
+    }
     _round_page = page <= 0 ? 0 : 1;
     reDisplay();
 }
 
+void AboutScene::diagnosticRestore() {
+    if (!_diagnostic_snapshot_active) return;
+    _round_page = _saved_round_page;
+    _diagnostic_snapshot_active = false;
+}
+
 void diagnostic_preview_about(int page) {
     aboutScene.diagnosticPreview(page);
+}
+
+void diagnostic_restore_about_preview() {
+    aboutScene.diagnosticRestore();
 }

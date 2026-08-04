@@ -1,10 +1,13 @@
 // Copyright (c) 2023 - Barton Dring
 // Use of this source code is governed by a GPLv3 license that can be found in the LICENSE file.
 
+#include <cstring>
 #include <string>
 #include "Scene.h"
 #include "ConfirmScene.h"
 #include "LatheModel.h"
+#include "LatheUi.h"
+#include "LatheUiModel.h"
 #include "MachineProfile.h"
 #include "e4math.h"
 
@@ -28,6 +31,7 @@ private:
     LathePendingAction _pending_action = LathePendingAction::None;
     int       _setup_selection = 0;
     int       _touch_selection = 0;
+    bool      _diagnostic_defaults = false;
     bool      _touch_diameter_mode = true;
     std::string _confirm_message;
     int       _confirm_tool = 0;
@@ -46,7 +50,56 @@ private:
     e4_t _reference_x[5] = { 0 };
     e4_t _reference_z[5] = { 0 };
 
+    bool      _diagnostic_snapshot_active = false;
+    int       _saved_lathe_tool = 1;
+    LathePage _saved_lathe_page = LathePage::Tools;
+    bool      _saved_diagnostic_defaults = false;
+    e4_t      _saved_gx[5] = { 0 };
+    e4_t      _saved_gz[5] = { 0 };
+    e4_t      _saved_wx[5] = { 0 };
+    e4_t      _saved_wz[5] = { 0 };
+    e4_t      _saved_nr[5] = { 0 };
+    int       _saved_orientation[5] = { 0 };
+    e4_t      _saved_reference_x[5] = { 0 };
+    e4_t      _saved_reference_z[5] = { 0 };
+
+    void snapshotDiagnosticState() {
+        if (_diagnostic_snapshot_active) return;
+        _saved_lathe_tool = _lathe_tool;
+        _saved_lathe_page = _lathe_page;
+        _saved_diagnostic_defaults = _diagnostic_defaults;
+        memcpy(_saved_gx, _gx, sizeof(_gx));
+        memcpy(_saved_gz, _gz, sizeof(_gz));
+        memcpy(_saved_wx, _wx, sizeof(_wx));
+        memcpy(_saved_wz, _wz, sizeof(_wz));
+        memcpy(_saved_nr, _nr, sizeof(_nr));
+        memcpy(_saved_orientation, _orientation, sizeof(_orientation));
+        memcpy(_saved_reference_x, _reference_x, sizeof(_reference_x));
+        memcpy(_saved_reference_z, _reference_z, sizeof(_reference_z));
+        _diagnostic_snapshot_active = true;
+    }
+
     int tool_index() const { return _lathe_tool - 1; }
+
+    LatheToolType displayed_tool_type(int station) const {
+        static const LatheToolType defaults[5] = { LatheToolType::RightTurn, LatheToolType::LeftTurn,
+                                                   LatheToolType::DrillQuarterInch, LatheToolType::BoringBar,
+                                                   LatheToolType::Probe };
+        return _diagnostic_defaults && station >= 1 && station <= 5 ? defaults[station - 1] : lathe_tool_type(station);
+    }
+
+    const char* setup_value(int field, int idx) const {
+        switch (field) {
+            case 0: return e4_to_cstr(_gx[idx], 3);
+            case 1: return e4_to_cstr(_gz[idx], 3);
+            case 2: return e4_to_cstr(_wx[idx], 3);
+            case 3: return e4_to_cstr(_wz[idx], 3);
+            case 4: return e4_to_cstr(_nr[idx], 3);
+            case 5: return intToCStr(_orientation[idx]);
+            case 6: return lathe_tool_type_label(lathe_tool_type(_lathe_tool));
+        }
+        return "";
+    }
 
     e4_t float_mm_to_e4(float value) {
         return (e4_t)(value * 10000.0f);
@@ -117,18 +170,49 @@ private:
         return WHITE;
     }
 
-    void draw_last_command_result(int y) {
+    bool command_result_visible() const {
         const LatheCommandResult& result = lathe_last_command_result();
         if (!result.known) {
-            return;
+            return false;
         }
         if (!result.pending && !result.recoverable && (uint32_t)(millis() - result.updated_ms) > 6000) {
-            return;
+            return false;
         }
+        return true;
+    }
+
+    void draw_last_command_result(int y) {
+        if (!command_result_visible()) return;
         centered_text(lathe_command_status_text(), y, command_color(lathe_command_severity()), TINY);
     }
 
     void draw_lathe_tool_list() {
+        if (lathe_ui_enabled()) {
+            lathe_ui_detail_surface("TOOLS");
+            const LatheStatus& status = lathe_status();
+            static const int row_y[5] = { 74, 100, 126, 152, 178 };
+            for (int tool = 1; tool <= 5; ++tool) {
+                int y = row_y[tool - 1];
+                bool selected = _lathe_tool == tool;
+                if (selected) canvas.drawRoundRect(28, y - 12, 184, 24, 7, lathe_ui_blue());
+                lathe_ui_tool_icon(displayed_tool_type(tool), 44, y, selected ? lathe_ui_blue() : lathe_ui_muted(), 2);
+                char number[5];
+                snprintf(number, sizeof(number), "T%d", tool);
+                text(number, 68, y, selected ? lathe_ui_blue() : lathe_ui_text(), TINY, middle_left);
+                lathe_ui_fit_text(lathe_tool_type_label(displayed_tool_type(tool)), 92, y, 98,
+                                  lathe_ui_text(), TINY, middle_left);
+                if (status.active_tool == tool) {
+                    canvas.fillCircle(203, y, 4, lathe_ui_green());
+                    canvas.drawCircle(203, y, 6, lathe_ui_green());
+                }
+            }
+            draw_last_command_result(57);
+            const char* red = (state == Idle && lathe_command_recoverable()) ? "Clear" : (state == Idle ? "Setup" : (state == Cycle || state == Hold || state == DoorClosed || state == Alarm ? "Reset" : ""));
+            const char* green = state == Idle ? (lathe_command_pending() ? "Wait" : (lathe_command_recoverable() ? "" : "Change")) : (state == Cycle ? "Hold" : (state == Hold || state == DoorClosed ? "Resume" : ""));
+            lathe_ui_action_legends(red, green, "Back");
+            refreshDisplay();
+            return;
+        }
         background();
         drawMenuTitle("Lathe Tools");
         drawStatusSmall(25);
@@ -157,6 +241,39 @@ private:
     }
 
     void draw_lathe_setup() {
+        if (lathe_ui_enabled()) {
+            lathe_ui_detail_surface("TOOL SETUP");
+            int idx = tool_index();
+            char title[10];
+            snprintf(title, sizeof(title), "T%d", _lathe_tool);
+            lathe_ui_tool_icon(lathe_tool_type(_lathe_tool), 38, 61, lathe_ui_blue(), 2);
+            text(title, 60, 61, lathe_ui_blue(), SMALL, middle_left);
+            lathe_ui_fit_text(lathe_tool_type_label(lathe_tool_type(_lathe_tool)), 91, 61, 111,
+                              lathe_ui_text(), TINY, middle_left);
+            const char* labels[7] = { "GX", "GZ", "WX", "WZ", "NOSE R", "ORIENT", "TYPE" };
+            int first_field = _setup_selection - 2;
+            if (first_field < 0) first_field = 0;
+            if (first_field > 2) first_field = 2;
+            for (int row = 0; row < 5; ++row) {
+                int field = first_field + row;
+                int y = 81 + row * 22;
+                if (_setup_selection == field) canvas.drawRoundRect(28, y - 9, 184, 18, 5, lathe_ui_blue());
+                text(labels[field], 34, y, _setup_selection == field ? lathe_ui_blue() : lathe_ui_muted(), TINY, middle_left);
+                lathe_ui_fit_text(setup_value(field, idx), 205, y, 112, lathe_ui_text(), TINY, middle_right);
+            }
+            if (command_result_visible()) {
+                draw_last_command_result(188);
+            } else {
+                char position[10];
+                snprintf(position, sizeof(position), "%d / 7", _setup_selection + 1);
+                centered_text(position, 188, lathe_ui_muted(), TINY);
+            }
+            lathe_ui_action_legends((state == Idle && lathe_command_recoverable()) ? "Clear" : "Back",
+                                    lathe_command_blocks_actions() ? (lathe_command_pending() ? "Wait" : "") : "Save",
+                                    "TouchOff");
+            refreshDisplay();
+            return;
+        }
         background();
         drawMenuTitle("Tool Setup");
         drawStatusTiny(24);
@@ -182,6 +299,43 @@ private:
     }
 
     void draw_lathe_touch_off() {
+        if (lathe_ui_enabled()) {
+            lathe_ui_detail_surface("TOUCH OFF");
+            int idx = tool_index();
+            e4_t machine_x;
+            e4_t machine_z;
+            selected_machine_positions_mm(machine_x, machine_z);
+            char tool[6];
+            char machine_x_value[20];
+            char machine_z_value[20];
+            char machine_x_text[24];
+            char machine_z_text[24];
+            snprintf(tool, sizeof(tool), "T%d", _lathe_tool);
+            snprintf(machine_x_value, sizeof(machine_x_value), "%s", e4_to_cstr(machine_x, 3));
+            snprintf(machine_z_value, sizeof(machine_z_value), "%s", e4_to_cstr(machine_z, 3));
+            snprintf(machine_x_text, sizeof(machine_x_text), "X %s", machine_x_value);
+            snprintf(machine_z_text, sizeof(machine_z_text), "Z %s", machine_z_value);
+            text(tool, 32, 67, lathe_ui_blue(), TINY, middle_left);
+            lathe_ui_fit_text(machine_x_text, 72, 67, 62, lathe_ui_text(), TINY, middle_left);
+            lathe_ui_fit_text(machine_z_text, 208, 67, 72, lathe_ui_text(), TINY, middle_right);
+
+            static const int row_y[3] = { 98, 132, 166 };
+            const char* labels[3] = { "REF X", "REF Z", "X MODE" };
+            for (int row = 0; row < 3; ++row) {
+                if (_touch_selection == row) canvas.drawRoundRect(28, row_y[row] - 12, 184, 24, 7, lathe_ui_blue());
+                const char* value = row == 0 ? e4_to_cstr(_reference_x[idx], 3) :
+                                    row == 1 ? e4_to_cstr(_reference_z[idx], 3) :
+                                               (_touch_diameter_mode ? "DIAMETER" : "RADIUS");
+                lathe_ui_value_row(row_y[row], labels[row], value,
+                                   _touch_selection == row ? lathe_ui_blue() : lathe_ui_text());
+            }
+            draw_last_command_result(189);
+            lathe_ui_action_legends((state == Idle && lathe_command_recoverable()) ? "Clear" : "Setup",
+                                    lathe_command_blocks_actions() ? (lathe_command_pending() ? "Wait" : "") : "Apply",
+                                    "Tools");
+            refreshDisplay();
+            return;
+        }
         background();
         drawMenuTitle("Touch Off");
         drawStatusTiny(24);
@@ -287,6 +441,12 @@ private:
             case 5:
                 rotateNumberLoop(_orientation[idx], delta, 0, 9);
                 break;
+            case 6: {
+                int value = static_cast<int>(lathe_tool_type(_lathe_tool));
+                rotateNumberLoop(value, delta, static_cast<int>(LatheToolType::Unset), static_cast<int>(LatheToolType::Parting));
+                set_lathe_tool_type(_lathe_tool, static_cast<LatheToolType>(value));
+                break;
+            }
         }
         save_selected_tool_prefs();
     }
@@ -384,10 +544,36 @@ public:
     ToolChangeScene() : Scene("Tools", 4) {}
 
     void diagnosticPreview(int page) {
+        snapshotDiagnosticState();
+        _diagnostic_defaults = false;
         _lathe_page = page == 1 ? LathePage::Setup : page == 2 ? LathePage::TouchOff : LathePage::Tools;
         load_lathe_prefs();
         seed_active_tool_from_status();
         reDisplay();
+    }
+
+    void diagnosticDefaults() {
+        snapshotDiagnosticState();
+        _diagnostic_defaults = true;
+        _lathe_page = LathePage::Tools;
+        _lathe_tool = 1;
+        reDisplay();
+    }
+
+    void diagnosticRestore() {
+        if (!_diagnostic_snapshot_active) return;
+        _lathe_tool = _saved_lathe_tool;
+        _lathe_page = _saved_lathe_page;
+        _diagnostic_defaults = _saved_diagnostic_defaults;
+        memcpy(_gx, _saved_gx, sizeof(_gx));
+        memcpy(_gz, _saved_gz, sizeof(_gz));
+        memcpy(_wx, _saved_wx, sizeof(_wx));
+        memcpy(_wz, _saved_wz, sizeof(_wz));
+        memcpy(_nr, _saved_nr, sizeof(_nr));
+        memcpy(_orientation, _saved_orientation, sizeof(_orientation));
+        memcpy(_reference_x, _saved_reference_x, sizeof(_reference_x));
+        memcpy(_reference_z, _saved_reference_z, sizeof(_reference_z));
+        _diagnostic_snapshot_active = false;
     }
 
     void onDialButtonPress() override {
@@ -503,7 +689,7 @@ public:
         if (_lathe_page == LathePage::Tools) {
             _lathe_page = LathePage::Setup;
         } else if (_lathe_page == LathePage::Setup) {
-            rotateNumberLoop(_setup_selection, 1, 0, 5);
+            rotateNumberLoop(_setup_selection, 1, 0, lathe_ui_enabled() ? 6 : 5);
         } else {
             rotateNumberLoop(_touch_selection, 1, 0, 2);
         }
@@ -547,6 +733,7 @@ public:
     }
 
     void onEntry(void* arg) override {
+        _diagnostic_defaults = false;
         if (!lathe_mode_active()) {
             return;
         }
@@ -590,4 +777,12 @@ ToolChangeScene toolchangeScene;
 
 void diagnostic_preview_tools(int selection) {
     toolchangeScene.diagnosticPreview(selection);
+}
+
+void diagnostic_preview_tool_defaults(int) {
+    toolchangeScene.diagnosticDefaults();
+}
+
+void diagnostic_restore_tools_preview() {
+    toolchangeScene.diagnosticRestore();
 }

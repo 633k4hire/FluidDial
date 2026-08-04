@@ -4,6 +4,7 @@
 #include "Scene.h"
 #include "ConfigItem.h"
 #include "LatheModel.h"
+#include "LatheUi.h"
 #include "MachineProfile.h"
 
 extern Scene statusScene;
@@ -95,17 +96,88 @@ class HomingScene : public Scene {
 private:
     int _axis_to_home = -1;
     int _auto         = false;
+    int _diagnostic_fixture = -1;
+    bool _diagnostic_snapshot_active = false;
+    int  _saved_axis_to_home = -1;
+    int  _saved_diagnostic_fixture = -1;
+
+    void snapshotDiagnosticState() {
+        if (_diagnostic_snapshot_active) return;
+        _saved_axis_to_home = _axis_to_home;
+        _saved_diagnostic_fixture = _diagnostic_fixture;
+        _diagnostic_snapshot_active = true;
+    }
+
+    void draw_lathe_home() {
+        lathe_ui_detail_surface("HOME");
+        const char* red_label = "";
+        char green_label[16] = { 0 };
+        const char* center_label = "Back";
+
+        static const int row_y[3] = { 68, 104, 140 };
+        for (int axis = 0; axis < 3; ++axis) {
+            int y = row_y[axis];
+            char label[2] = { axis == 0 ? 'X' : axis == 1 ? 'Z' : 'C', '\0' };
+            text(label, 34, y, lathe_ui_text(), SMALL, middle_left);
+            if (axis == 2) {
+                lathe_ui_badge(128, y - 11, 70, "N/A", lathe_ui_muted());
+            } else {
+                bool homed = _diagnostic_fixture == 1 || (_diagnostic_fixture < 0 && is_axis_homed(axis));
+                const char* value = state == Homing && is_homing(axis) ? "HOMING" : homed ? "HOMED" : "NEEDS HOME";
+                int color = state == Homing && is_homing(axis) ? lathe_ui_blue() : homed ? lathe_ui_green() : lathe_ui_amber();
+                lathe_ui_badge(98, y - 11, 100, value, color);
+            }
+        }
+
+        const char* selected = _axis_to_home < 0 ? "ALL X/Z" : _axis_to_home == 0 ? "X AXIS" : "Z AXIS";
+        lathe_ui_badge(66, 162, 108, selected, lathe_ui_blue());
+
+        if (state == Homing) {
+            red_label = "E-Stop";
+        } else if (state == Idle || state == Alarm) {
+            if (state == Alarm && strchr(myCtrlPins, 'D') == nullptr) red_label = "Reset";
+            if (!have_homing_info()) {
+                center_label = "Loading";
+            } else {
+                snprintf(green_label, sizeof(green_label), "Home %s", _axis_to_home < 0 ? "X/Z" : profile_axis_cstr(_axis_to_home));
+            }
+        } else {
+            centered_text("HOME UNAVAILABLE", 189, lathe_ui_amber(), TINY);
+            red_label = "E-Stop";
+            if (state == Cycle) snprintf(green_label, sizeof(green_label), "Hold");
+            else if (state == Hold || state == DoorClosed) snprintf(green_label, sizeof(green_label), "Resume");
+        }
+        lathe_ui_action_legends(red_label, green_label, center_label);
+        refreshDisplay();
+    }
 
 public:
     HomingScene() : Scene("Home", 4) {}
 
     void diagnosticPreview(int selection) {
+        snapshotDiagnosticState();
+        _diagnostic_fixture = -1;
         _axis_to_home = selection - 1;
         reDisplay();
     }
 
+    void diagnosticState(int fixture) {
+        snapshotDiagnosticState();
+        _diagnostic_fixture = fixture;
+        _axis_to_home = -1;
+        reDisplay();
+    }
+
+    void diagnosticRestore() {
+        if (!_diagnostic_snapshot_active) return;
+        _axis_to_home = _saved_axis_to_home;
+        _diagnostic_fixture = _saved_diagnostic_fixture;
+        _diagnostic_snapshot_active = false;
+    }
+
     bool is_homing(int axis) { return can_home(axis) && (_axis_to_home == -1 || _axis_to_home == axis); }
     void onEntry(void* arg) override {
+        _diagnostic_fixture = -1;
         if (state == Idle && _auto) {
             pop_scene();
         }
@@ -170,6 +242,10 @@ public:
     void onDROChange() { reDisplay(); }  // also covers any status change
 
     void reDisplay() {
+        if (lathe_ui_enabled()) {
+            draw_lathe_home();
+            return;
+        }
         background();
         drawMenuTitle(current_scene->name());
         drawStatus();
@@ -251,4 +327,12 @@ HomingScene homingScene;
 
 void diagnostic_preview_homing(int selection) {
     homingScene.diagnosticPreview(selection);
+}
+
+void diagnostic_preview_homing_state(int fixture) {
+    homingScene.diagnosticState(fixture);
+}
+
+void diagnostic_restore_homing_preview() {
+    homingScene.diagnosticRestore();
 }

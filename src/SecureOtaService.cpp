@@ -516,6 +516,7 @@ namespace {
         server->sendHeader("Cache-Control", "no-store");
         if (screenId.length()) {
             server->sendHeader("X-TAMS-Screen-Id", screenId);
+            server->sendHeader("X-TAMS-Screen-Revision", String(diagnostic_screen_revision()));
             server->sendHeader("Content-Disposition", "attachment; filename=\"m5dial-" + screenId + ".bmp\"");
         } else {
             server->sendHeader("Content-Disposition", "attachment; filename=\"m5dial-current.bmp\"");

@@ -19,6 +19,7 @@ public:
     void reDisplay() override;
 
     void diagnosticPreview(int selection);
+    void diagnosticRestore();
 
 private:
     enum class Page : uint8_t {
@@ -37,6 +38,9 @@ private:
     Page     _page = Page::Overview;
     Preview  _preview = Preview::Live;
     uint32_t _last_refresh_ms = 0;
+    bool     _diagnostic_snapshot_active = false;
+    Page     _saved_page = Page::Overview;
+    Preview  _saved_preview = Preview::Live;
 
     void nextPage(int delta);
     void drawHeader(const char* title, int title_color = WHITE);

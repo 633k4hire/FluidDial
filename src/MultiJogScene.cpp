@@ -9,6 +9,8 @@
 #include "System.h"  // dbg_printf()
 #include "LatheModel.h"
 #include "MachineProfile.h"
+#include "LatheUiModel.h"
+#include "LatheUi.h"
 
 //   Jog tracing — enable with -DJOG_TRACE
 //   flow: 0=Blocking(UART) 1=Timed(ESP-NOW horizon) 2=Window(Telnet ok-count)
@@ -118,6 +120,8 @@ private:
     int          max_index() { return 6; }  // 10^3 = 1000;
     int          min_index() { return 0; }  // 10^3 = 1000;
     int          _selected_mask = 1 << 0;
+    bool         _diagnostic_snapshot_active = false;
+    int          _saved_selected_mask = 1 << 0;
     const int    num_axes       = 3;
     bool         _cancelling    = false;
     bool         _cancel_held   = false;
@@ -130,6 +134,10 @@ private:
     static const uint32_t MPG_INTERVAL_MS = 30;   // min spacing between jog commands
     static const uint32_t MPG_STOP_MS     = 280;  // dial-still time that ends a jog
     static const uint32_t QUEUE_CAP_MS    = 180;  // max motion kept buffered ahead (Timed)
+    // Precise-mode detents are independent, exact-position moves. Pace each
+    // one over roughly 100 ms so a 0.01/0.1 mm jog does not hit the planner as
+    // a maximum-feed start/stop impulse.
+    static const uint32_t PRECISE_MOVE_MS = 100;
 
     static const int      JOG_WINDOW = 8;
 
@@ -179,16 +187,35 @@ public:
     MultiJogScene() : Scene("Jog", 4, jog_help_text) {}
 
     void diagnosticPreview(int selection) {
+        if (!_diagnostic_snapshot_active) {
+            _saved_selected_mask = _selected_mask;
+            _diagnostic_snapshot_active = true;
+        }
         if (selection == 2) {
             _selected_mask = (1 << 0) | (1 << 1);
         } else {
             _selected_mask = 1 << selection;
         }
-        reset_jog_runtime();
         reDisplay();
     }
 
+    void diagnosticRestore() {
+        if (!_diagnostic_snapshot_active) return;
+        _selected_mask = _saved_selected_mask;
+        _diagnostic_snapshot_active = false;
+    }
+
     e4_t distance(int axis) { return e4_power10(_dist_index[axis] - num_digits()); }
+    JogUiSnapshot uiSnapshot() {
+        JogUiSnapshot snapshot;
+        snapshot.selected_mask = static_cast<uint8_t>(_selected_mask);
+        for (int axis = 0; axis < 3; ++axis) {
+            snapshot.step[axis] = distance(axis);
+        }
+        snapshot.dynamic = _dynamic_mode;
+        snapshot.moving  = _mpg_jogging || state == Jog;
+        return snapshot;
+    }
     void unselect_all() { _selected_mask = 0; }
     bool selected(int axis) { return _selected_mask & (1 << axis); }
     bool only(int axis) { return _selected_mask == (1 << axis); }
@@ -268,6 +295,38 @@ public:
     }
 
     void reDisplay() {
+        if (lathe_ui_enabled()) {
+            lathe_ui_detail_surface("JOG");
+            lathe_ui_badge(79, 53, 82, _dynamic_mode ? "DYNAMIC" : "PRECISE", lathe_ui_blue());
+            if (state != Jog && _cancelling) _cancelling = false;
+            if (_cancelling || _cancel_held) {
+                centered_text("JOG CANCELED", 120, RED, SMALL);
+                lathe_ui_footer_banner("RELEASE TO RESET", RED);
+            } else {
+                for (int axis = 0; axis < 2; ++axis) {
+                    int machine_axis = profile_machine_axis(axis);
+                    pos_t value = machine_axis >= 0 && machine_axis < 6 ? myAxes[machine_axis] : 0;
+                    static const int dro_y[2] = { 92, 128 };
+                    lathe_ui_dro_row(dro_y[axis], profile_axis_char(axis), value, selected(axis));
+                }
+                int active_axis = selected(1) ? 1 : 0;
+                lathe_ui_value_row(164, "ACTIVE AXIS", selected(0) && selected(1) ? "X + Z" : profile_axis_cstr(active_axis), lathe_ui_blue());
+                if (state == Jog) {
+                    lathe_ui_footer_banner("TOUCH TO CANCEL", lathe_ui_amber());
+                } else {
+                    lathe_ui_value_row(185, "INCREMENT", e4_to_cstr(distance(active_axis), 4), lathe_ui_text());
+                    char dial_legend[10] = "Zero";
+                    size_t length = 4;
+                    for (int axis = 0; axis < num_axes && length + 1 < sizeof(dial_legend); ++axis) {
+                        if (selected(axis)) dial_legend[length++] = profile_axis_char(axis);
+                    }
+                    dial_legend[length] = '\0';
+                    lathe_ui_action_legends("Jog-", "Jog+", dial_legend);
+                }
+            }
+            refreshDisplay();
+            return;
+        }
         background();
         drawJogBg();
         drawMenuTitle("Jog");
@@ -550,6 +609,13 @@ public:
         return move;
     }
 
+    e4_t precise_jog_feed(e4_t move) {
+        // feed[units/min] = move[units] * 60000 ms/min / target duration[ms]
+        int64_t feed64 = (int64_t)move * 60000 / PRECISE_MOVE_MS;
+        e4_t   f_max  = e4_from_int(inInches ? 24 : 600);
+        return feed64 > f_max ? f_max : (e4_t)feed64;
+    }
+
     void send_mpg_jog(int delta, e4_t feed) {
         std::string cmd("$J=G91");
         cmd += inInches ? "G20" : "G21";
@@ -714,7 +780,7 @@ public:
         if ((now - _last_mpg_ms) >= MPG_INTERVAL_MS) {
             JogFlowControl flow = jog_flow_control();
             e4_t     move = mpg_move_distance(_mpg_accum);
-            e4_t     feed = e4_from_int(inInches ? 24 : 600);
+            e4_t     feed = precise_jog_feed(move);
             uint32_t outstanding =
                 flow == JogFlowControl::Timed ? jog_outstanding_ms(now) : 0;
             if (jog_send_blocked(now)) {
@@ -819,5 +885,10 @@ void diagnostic_preview_jog(int selection) {
     multiJogScene.diagnosticPreview(selection);
 }
 
+void diagnostic_restore_jog_preview() {
+    multiJogScene.diagnosticRestore();
+}
+
 bool jog_dynamic_mode() { return multiJogScene.dynamicMode(); }
 void jog_toggle_mode() { multiJogScene.toggleMode(); }
+JogUiSnapshot jog_ui_snapshot() { return multiJogScene.uiSnapshot(); }

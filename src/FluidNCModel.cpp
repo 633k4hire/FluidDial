@@ -440,7 +440,6 @@ static int s_consecutive_timeouts = 0;
 static bool s_skip_first_ping = false;
 
 void request_status_report() {
-    fnc_putchar(0x11);           // XON; request software flow control
     fnc_realtime(StatusReport);  // Request fresh status
     next_ping_ms = milliseconds() + ping_interval_ms;
 }
@@ -488,7 +487,6 @@ bool pendant_wait_for_fluidnc_ready(uint32_t budget_ms) {
     int      total_rx = 0;
     while ((int32_t)(milliseconds() - deadline) < 0) {
         probe++;
-        fnc_putchar(0x11);           // XON to clear any stale XOFF on FluidNC
         fnc_realtime(StatusReport);  // '?' probe
 
         int      window_rx  = 0;
@@ -516,7 +514,7 @@ bool pendant_wait_for_fluidnc_ready(uint32_t budget_ms) {
 
 // Escalating recovery when the link has gone silent. Counter ticks once
 // per disconnect_interval_ms with no RX.
-//   tick 1: drain stale RX and send XON + status request.
+//   tick 1: drain stale RX and send a status request.
 //   tick 3: re-initialize the UART driver from scratch, then re-probe.
 //           UART re-init is a no-op when running in WiFi mode.
 static void recover_link(int tick) {

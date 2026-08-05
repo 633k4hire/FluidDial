@@ -7,8 +7,15 @@
 #include "ConfirmScene.h"
 #include "e4math.h"
 #include "System.h"  // dbg_printf()
+#include "HomingScene.h"
 #include "LatheModel.h"
 #include "MachineProfile.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <string>
 
 //   Jog tracing — enable with -DJOG_TRACE
 //   flow: 0=Blocking(UART) 1=Timed(ESP-NOW horizon) 2=Window(Telnet ok-count)
@@ -41,6 +48,38 @@ static const char* jog_help_text[] = { "Jog Help",
 
 bool jog_dynamic_mode();
 void jog_toggle_mode();
+bool jog_angle_available();
+bool jog_angle_selecting();
+bool jog_angle_armed();
+int  jog_angle_display_degrees();
+int  jog_angle_path_digit();
+int  jog_angle_reference_axis();
+const char* jog_angle_message();
+void jog_angle_adjust(int delta);
+void jog_angle_red_action();
+void jog_angle_cancel_selection();
+void jog_angle_safety_check();
+
+namespace {
+constexpr float JogPi = 3.14159265358979323846f;
+
+int normalized_angle(int value) {
+    value %= 360;
+    return value < 0 ? value + 360 : value;
+}
+
+void draw_perimeter_angle_indicator(int angle_degrees, uint16_t color) {
+    const float radians = normalized_angle(angle_degrees) * JogPi / 180.0f;
+    const int   cx = 120;
+    const int   cy = 120;
+    const int   inner_x = cx + static_cast<int>(std::lround(103.0f * std::cos(radians)));
+    const int   inner_y = cy - static_cast<int>(std::lround(103.0f * std::sin(radians)));
+    const int   outer_x = cx + static_cast<int>(std::lround(116.0f * std::cos(radians)));
+    const int   outer_y = cy - static_cast<int>(std::lround(116.0f * std::sin(radians)));
+    canvas.drawLine(inner_x, inner_y, outer_x, outer_y, color);
+    canvas.fillCircle(outer_x, outer_y, 3, color);
+}
+}  // namespace
 
 // Jog settings / help screen (dial center)
 // the green button toggles between the two jogging behaviors
@@ -55,21 +94,48 @@ static const char* jog_help_lines[] = {
 #endif
 
 class JogHelpScene : public Scene {
+    int _diagnostic_angle_state = -1;
+
+    bool shown_selecting() const { return _diagnostic_angle_state == 1 || (_diagnostic_angle_state < 0 && jog_angle_selecting()); }
+    bool shown_armed() const { return _diagnostic_angle_state == 2 || (_diagnostic_angle_state < 0 && jog_angle_armed()); }
+
     void drawScreen() {
-        drawBackground(BROWN);
+        // The M5 panel is physically round, but authenticated captures expose
+        // the full 240x240 canvas. Keep pixels outside the bezel black while
+        // preserving the existing brown Jog Mode face on the device.
+        drawBackground(BLACK);
+        canvas.fillCircle(120, 120, 119, BROWN);
 
         bool dyn = jog_dynamic_mode();
 #ifdef USE_M5
-        centered_text("Jog Mode", 48, WHITE, SMALL);
-        centered_text(dyn ? "Dynamic" : "Precise", 84, dyn ? GREEN : YELLOW, MEDIUM);
-        if (dyn) {
+        const bool angle_ui = jog_angle_available() || _diagnostic_angle_state >= 0;
+        centered_text("Jog Mode", angle_ui ? 30 : 48, WHITE, SMALL);
+        centered_text(dyn ? "Dynamic" : "Precise", angle_ui ? 58 : 84, dyn ? GREEN : YELLOW, angle_ui ? SMALL : MEDIUM);
+        if (angle_ui) {
+            const bool selecting = shown_selecting();
+            const bool armed     = shown_armed();
+            const uint16_t color = armed ? GREEN : selecting ? YELLOW : LIGHTGREY;
+            char angle[28];
+            snprintf(angle, sizeof(angle), "%03d deg", jog_angle_display_degrees());
+            centered_text(angle, 92, color, MEDIUM);
+            centered_text(armed ? "ANGLE ARMED" : selecting ? "SELECT ANGLE" : "ANGLE OFF", 119, color, SMALL);
+            char path[32];
+            const float path_value = std::pow(10.0f, static_cast<float>(jog_angle_path_digit() - num_digits()));
+            snprintf(path, sizeof(path), "%.4g %s %c count", path_value, inInches ? "in" : "mm",
+                     profile_axis_char(jog_angle_reference_axis()));
+            centered_text(path, 145, WHITE, TINY);
+            centered_text(selecting ? "Turn dial, red to arm" : armed ? "Red disarms" : "Red selects angle", 168, LIGHTGREY, TINY);
+            if (jog_angle_message()[0]) centered_text(jog_angle_message(), 190, ORANGE, TINY);
+            draw_perimeter_angle_indicator(jog_angle_display_degrees(), color);
+        } else if (dyn) {
             centered_text("Follows the handwheel,", 120, WHITE, TINY);
             centered_text("stops when you stop.", 140, WHITE, TINY);
+            centered_text("Top/Bot: axis   L/R: digit", 170, WHITE, TINY);
         } else {
             centered_text("Moves the exact number", 120, WHITE, TINY);
             centered_text("of clicks x step size.", 140, WHITE, TINY);
+            centered_text("Top/Bot: axis   L/R: digit", 170, WHITE, TINY);
         }
-        centered_text("Top/Bot: axis   L/R: digit", 170, WHITE, TINY);
 #else
         centered_text("Jog Mode", 18, WHITE, SMALL);
         centered_text(dyn ? "Dynamic" : "Precise", 50, dyn ? GREEN : YELLOW, MEDIUM);
@@ -86,21 +152,47 @@ class JogHelpScene : public Scene {
             pos += 20;
         }
 #endif
-        drawButtonLegends("", "Toggle", "Back");
+        const char* red = shown_armed() ? "Disarm" : shown_selecting() ? "Arm" : "Select";
+        drawButtonLegends(jog_angle_available() || _diagnostic_angle_state >= 0 ? red : "", "Toggle", "Back");
         refreshDisplay();
     }
 
 public:
     JogHelpScene() : Scene("Jog Mode") {}
-    void onEntry(void* arg) override { drawScreen(); }
+    void onEntry(void* arg) override { _diagnostic_angle_state = -1; drawScreen(); }
     void reDisplay() override { drawScreen(); }
+    void diagnosticPreview(int state) {
+        _diagnostic_angle_state = state;
+        drawScreen();
+        _diagnostic_angle_state = -1;
+    }
     void onGreenButtonPress() override {
         jog_toggle_mode();
         drawScreen();
     }
-    void onDialButtonPress() override { pop_scene(); }
+    void onRedButtonPress() override {
+        if (jog_angle_available()) jog_angle_red_action();
+        drawScreen();
+    }
+    void onEncoder(int delta) override {
+        if (jog_angle_selecting()) {
+            jog_angle_adjust(delta);
+            drawScreen();
+        }
+    }
+    void onPoll() override { jog_angle_safety_check(); }
+    void onStateChange(state_t) override {
+        jog_angle_safety_check();
+        drawScreen();
+    }
+    void onDialButtonPress() override {
+        jog_angle_cancel_selection();
+        pop_scene();
+    }
+    void onExit() override { jog_angle_cancel_selection(); }
     void onTouchClick() override {
         if (touchIsCenter()) {
+            jog_angle_cancel_selection();
             pop_scene();
         }
     }
@@ -150,6 +242,132 @@ private:
     uint32_t _cancel_req_ms    = 0;
     uint32_t _last_cancel_ms   = 0;
 
+    // Lathe X/Z angle jogging.  The angle is persisted, while selecting and
+    // armed are deliberately runtime-only.  X or Z remains the operator's
+    // counting/reference axis even though every armed move follows the coupled
+    // X/Z vector.
+    int      _angle_degrees           = 45;
+    int      _angle_candidate_degrees = 45;
+    int      _angle_reference_axis    = 1;  // Z
+    bool     _angle_selecting         = false;
+    bool     _angle_armed             = false;
+    bool     _angle_armed_diameter    = false;
+    bool     _angle_armed_inches      = false;
+    bool     _opening_angle_help      = false;
+    bool     _diagnostic_angle_armed  = false;
+    int      _diagnostic_selection_mask = -1;
+    int      _diagnostic_angle_reference_axis = 1;
+    double   _angle_ideal_path_e4     = 0.0;
+    int64_t  _angle_sent_x_e4         = 0;
+    int64_t  _angle_sent_z_e4         = 0;
+    std::string _angle_message;
+
+    void reset_angle_residuals() {
+        _angle_ideal_path_e4 = 0.0;
+        _angle_sent_x_e4     = 0;
+        _angle_sent_z_e4     = 0;
+    }
+
+    bool angle_can_arm(std::string& reason) const {
+        if (!machine_profile_is_lathe() || !lathe_mode_active()) {
+            reason = "Lathe mode required";
+            return false;
+        }
+        if (state != Idle || !operator_machine_actions_available()) {
+            reason = "Controller must be Idle";
+            return false;
+        }
+        if (!is_axis_homed(0) || !is_axis_homed(1)) {
+            reason = "Home X and Z first";
+            return false;
+        }
+        return true;
+    }
+
+    int preferred_angle_reference() const {
+        if (_selected_mask == (1 << 0)) return 0;
+        if (_selected_mask == (1 << 1)) return 1;
+        return (_selected_mask & (1 << 1)) ? 1 : 0;
+    }
+
+    static double angle_component(int degrees, int axis) {
+        const double radians = normalized_angle(degrees) * static_cast<double>(JogPi) / 180.0;
+        return axis == 0 ? std::sin(radians) : std::cos(radians);
+    }
+
+    static bool angle_reference_valid(int degrees, int axis) {
+        return std::abs(angle_component(degrees, axis)) > 0.0001;
+    }
+
+    int shown_angle_reference_axis() const {
+        return _diagnostic_angle_armed ? _diagnostic_angle_reference_axis : _angle_reference_axis;
+    }
+
+    bool display_selected(int axis) const {
+        if (_diagnostic_selection_mask >= 0) {
+            return (_diagnostic_selection_mask & (1 << axis)) != 0;
+        }
+        return _angle_armed ? axis == _angle_reference_axis : (_selected_mask & (1 << axis));
+    }
+
+    e4_t angle_reference_distance() const {
+        return e4_power10(_dist_index[_angle_reference_axis] - num_digits());
+    }
+
+    double angle_path_per_count() const {
+        const double component = std::abs(angle_component(_angle_degrees, _angle_reference_axis));
+        const double command_scale = _angle_reference_axis == 0 && _angle_armed_diameter ? 2.0 : 1.0;
+        if (component <= 0.0001) return 0.0;
+        return static_cast<double>(angle_reference_distance()) / (component * command_scale);
+    }
+
+    void angle_vector_for_path(e4_t path, e4_t& x_command, e4_t& z_move) const {
+        const float radians = _angle_degrees * JogPi / 180.0f;
+        const double radial = static_cast<double>(path) * std::sin(radians);
+        x_command = static_cast<e4_t>(std::llround(radial * (_angle_armed_diameter ? 2.0 : 1.0)));
+        z_move     = static_cast<e4_t>(std::llround(static_cast<double>(path) * std::cos(radians)));
+    }
+
+    void angle_increment_components(int delta, e4_t& x_command, e4_t& z_move) {
+        const double next_path = _angle_ideal_path_e4 + static_cast<double>(delta) * angle_path_per_count();
+        const float  radians   = _angle_degrees * JogPi / 180.0f;
+        const int64_t ideal_x  = std::llround(next_path * std::sin(radians) * (_angle_armed_diameter ? 2.0 : 1.0));
+        const int64_t ideal_z  = std::llround(next_path * std::cos(radians));
+        x_command = static_cast<e4_t>(ideal_x - _angle_sent_x_e4);
+        z_move     = static_cast<e4_t>(ideal_z - _angle_sent_z_e4);
+        _angle_ideal_path_e4 = next_path;
+        _angle_sent_x_e4     = ideal_x;
+        _angle_sent_z_e4     = ideal_z;
+    }
+
+    e4_t angle_command_feed(e4_t physical_feed) const {
+        if (!_angle_armed_diameter) return physical_feed;
+        const float radians = _angle_degrees * JogPi / 180.0f;
+        const float radial  = std::sin(radians);
+        const float axial   = std::cos(radians);
+        const float planner_scale = std::sqrt(4.0f * radial * radial + axial * axial);
+        return static_cast<e4_t>(std::lround(static_cast<float>(physical_feed) * planner_scale));
+    }
+
+    void append_angle_axes(std::string& cmd, e4_t x_command, e4_t z_move) const {
+        if (x_command != 0) {
+            cmd += 'X';
+            cmd += e4_to_cstr(x_command, 4);
+        }
+        if (z_move != 0) {
+            cmd += 'Z';
+            cmd += e4_to_cstr(z_move, 4);
+        }
+    }
+
+    void disarm_angle(bool cancel_motion, const char* message = nullptr) {
+        _angle_selecting = false;
+        _angle_armed     = false;
+        reset_angle_residuals();
+        if (cancel_motion) cancel_jog();
+        if (message) _angle_message = message;
+    }
+
     uint32_t jog_outstanding_ms(uint32_t now) const {
         int32_t remaining = (int32_t)(_jog_drain_ms - now);
         return remaining > 0 ? (uint32_t)remaining : 0;
@@ -177,25 +395,120 @@ private:
         _cancel_pending   = false;
         _cancelling       = false;
         _cancel_held      = false;
+        reset_angle_residuals();
     }
 
 public:
     MultiJogScene() : Scene("Jog", 4, jog_help_text) {}
 
     void diagnosticPreview(int selection) {
+        // Diagnostic rendering is synchronous.  Use transient display-only
+        // selectors and restore them immediately so a Wi-Fi screenshot can
+        // never change the operator's live axis selection or jog runtime.
+        _diagnostic_angle_armed        = selection == 3;
+        _diagnostic_angle_reference_axis = 1;
         if (selection == 2) {
-            _selected_mask = (1 << 0) | (1 << 1);
+            _diagnostic_selection_mask = (1 << 0) | (1 << 1);
+        } else if (selection == 3) {
+            _diagnostic_selection_mask = 1 << _diagnostic_angle_reference_axis;
         } else {
-            _selected_mask = 1 << selection;
+            _diagnostic_selection_mask = 1 << selection;
         }
-        reset_jog_runtime();
         reDisplay();
+        _diagnostic_angle_armed   = false;
+        _diagnostic_selection_mask = -1;
+    }
+
+    bool angleAvailable() const { return machine_profile_is_lathe(); }
+    bool angleSelecting() const { return _angle_selecting; }
+    bool angleArmed() const { return _angle_armed; }
+    int angleDisplayDegrees() const { return _angle_selecting ? _angle_candidate_degrees : _angle_degrees; }
+    int anglePathDigit() const { return _dist_index[_angle_reference_axis]; }
+    int angleReferenceAxis() const { return _angle_reference_axis; }
+    const char* angleMessage() const { return _angle_message.c_str(); }
+
+    void adjustAngle(int delta) {
+        if (!_angle_selecting || delta == 0) return;
+        _angle_candidate_degrees = normalized_angle(_angle_candidate_degrees - delta);
+        _angle_message.clear();
+    }
+
+    void cancelAngleSelection() {
+        if (!_angle_selecting) return;
+        _angle_selecting = false;
+        _angle_candidate_degrees = _angle_degrees;
+        _angle_message.clear();
+    }
+
+    void angleRedAction() {
+        if (_angle_armed) {
+            disarm_angle(true, "Angle disarmed");
+            request_redisplay();
+            return;
+        }
+        if (!_angle_selecting) {
+            _angle_candidate_degrees = _angle_degrees;
+            _angle_reference_axis = preferred_angle_reference();
+            _angle_selecting = true;
+            _angle_message.clear();
+            request_redisplay();
+            return;
+        }
+
+        std::string reason;
+        if (!angle_can_arm(reason)) {
+            _angle_message = reason;
+            request_redisplay();
+            return;
+        }
+        _angle_degrees        = normalized_angle(_angle_candidate_degrees);
+        if (!angle_reference_valid(_angle_degrees, _angle_reference_axis)) {
+            _angle_reference_axis = 1 - _angle_reference_axis;
+        }
+        _selected_mask        = 1 << _angle_reference_axis;
+        _angle_selecting      = false;
+        _angle_armed          = true;
+        _angle_armed_diameter = lathe_status().diameter_mode;
+        _angle_armed_inches   = inInches;
+        _angle_message        = "Angle armed";
+        setPref("AngleDeg", _angle_degrees);
+        reset_angle_residuals();
+        request_redisplay();
+    }
+
+    void angleSafetyCheck() {
+        bool changed = false;
+        if (_angle_selecting &&
+            (state != Idle || !lathe_mode_active() || !operator_machine_actions_available())) {
+            cancelAngleSelection();
+            _angle_message = "State changed; selection canceled";
+            changed = true;
+        }
+        if (!_angle_armed) {
+            if (changed) request_redisplay();
+            return;
+        }
+        const bool state_ok = state == Idle || state == Jog;
+        const bool ready_ok = machine_profile_is_lathe() && lathe_mode_active() &&
+                              operator_machine_actions_available() &&
+                              is_axis_homed(0) && is_axis_homed(1);
+        const bool modes_ok = _angle_armed_diameter == lathe_status().diameter_mode &&
+                              _angle_armed_inches == inInches;
+        if (!state_ok || !ready_ok || !modes_ok) {
+            disarm_angle(true, !modes_ok ? "Units/G7/G8 changed" : "State changed; disarmed");
+            request_redisplay();
+        }
+    }
+
+    void openAngleHelp() {
+        _opening_angle_help = true;
+        push_scene(&jogHelpScene);
     }
 
     e4_t distance(int axis) { return e4_power10(_dist_index[axis] - num_digits()); }
     void unselect_all() { _selected_mask = 0; }
-    bool selected(int axis) { return _selected_mask & (1 << axis); }
-    bool only(int axis) { return _selected_mask == (1 << axis); }
+    bool selected(int axis) { return _angle_armed ? axis == _angle_reference_axis : (_selected_mask & (1 << axis)); }
+    bool only(int axis) { return !_angle_armed && _selected_mask == (1 << axis); }
 
     int  next(int axis) { return (axis < 2) ? axis + 1 : 0; }
     void select(int axis) { _selected_mask |= 1 << axis; }
@@ -274,13 +587,21 @@ public:
     void reDisplay() {
         background();
         drawJogBg();
+        const bool show_angle = _angle_armed || _diagnostic_angle_armed;
+        if (show_angle) draw_perimeter_angle_indicator(_angle_degrees, GREEN);
         drawMenuTitle("Jog");
-        if (state == Idle) {
-            centered_text(_dynamic_mode ? "Dynamic" : "Precise", 45, 65535, SMALL);
+        if (state == Idle || _diagnostic_angle_armed) {
+            if (show_angle) {
+                char mode_angle[36];
+                snprintf(mode_angle, sizeof(mode_angle), "%s A%03d %c", _dynamic_mode ? "Dynamic" : "Precise",
+                         _angle_degrees, profile_axis_char(shown_angle_reference_axis()));
+                centered_text(mode_angle, 45, GREEN, SMALL);
+            } else {
+                centered_text(_dynamic_mode ? "Dynamic" : "Precise", 45, 65535, SMALL);
+            }
         } else {
             drawStatus();
         }
-
         if (state != Jog && _cancelling) {
             _cancelling = false;
         }
@@ -289,7 +610,9 @@ public:
         } else {
             DRO dro(16, 68, 210, 32);
             for (size_t axis = 0; axis < num_axes; axis++) {
-                dro.draw(axis, _dist_index[axis], selected(axis));
+                const int  digit = _dist_index[axis];
+                const bool highlighted = display_selected(axis);
+                dro.draw(axis, digit, highlighted);
             }
             if (state == Jog) {
                 if (!_continuous) {
@@ -298,7 +621,7 @@ public:
             } else {
                 std::string dialLegend("Zero");
                 for (int axis = 0; axis < num_axes; axis++) {
-                    if (selected(axis)) {
+                    if (display_selected(axis)) {
                         dialLegend += profile_axis_char(axis);
                     }
                 }
@@ -318,6 +641,8 @@ public:
         send_line(cmd.c_str());
     }
     void onEntry(void* arg) {
+        _diagnostic_angle_armed = false;
+        _opening_angle_help     = false;
         if (arg && strcmp((const char*)arg, "Confirmed") == 0) {
             zero_axes();
         }
@@ -329,6 +654,7 @@ public:
                 getPref("DistanceDigit", axis, &_dist_index[axis]);
             }
             getPref("JogMode", &_dynamic_mode);
+            getPref("AngleDeg", &_angle_degrees);
 #ifdef MAIJKER_XZACT_LATHE
             // Existing pendants may have the old 1 mm/detent default stored in
             // NVS. Apply the jeweler-lathe 0.1 mm profile once, then preserve
@@ -344,6 +670,8 @@ public:
             }
 #endif
         }
+        _angle_degrees           = normalized_angle(_angle_degrees);
+        _angle_candidate_degrees = _angle_degrees;
     }
 
     int which(int x, int y) {
@@ -369,13 +697,17 @@ public:
         _dist_index[axis] = value;
         setPref("DistanceDigit", axis, value);
     }
-
     void increment_distance(int axis) {
         if (_dist_index[axis] < max_index()) {
             set_dist_index(axis, _dist_index[axis] + 1);
         }
     }
     void increment_distance() {
+        if (_angle_armed) {
+            increment_distance(_angle_reference_axis);
+            reset_angle_residuals();
+            return;
+        }
         for (int axis = 0; axis < num_axes; axis++) {
             if (selected(axis)) {
                 increment_distance(axis);
@@ -389,6 +721,11 @@ public:
     }
 
     void decrement_distance() {
+        if (_angle_armed) {
+            decrement_distance(_angle_reference_axis);
+            reset_angle_residuals();
+            return;
+        }
         for (int axis = 0; axis < num_axes; axis++) {
             if (selected(axis)) {
                 decrement_distance(axis);
@@ -396,6 +733,13 @@ public:
         }
     }
     void rotate_distance() {
+        if (_angle_armed) {
+            int next = _dist_index[_angle_reference_axis] + 1;
+            if (next >= max_index()) next = min_index();
+            set_dist_index(_angle_reference_axis, next);
+            reset_angle_residuals();
+            return;
+        }
         for (int axis = 0; axis < num_axes; axis++) {
             if (selected(axis)) {
                 if (++_dist_index[axis] >= max_index()) {
@@ -422,6 +766,17 @@ public:
         setPref("JogMode", _dynamic_mode);
     }
     void next_axis() {
+        if (_angle_armed) {
+            int next_reference = 1 - _angle_reference_axis;
+            if (angle_reference_valid(_angle_degrees, next_reference)) {
+                cancel_jog();
+                _angle_reference_axis = next_reference;
+                _selected_mask = 1 << _angle_reference_axis;
+                _angle_message.clear();
+                reset_angle_residuals();
+            }
+            return;
+        }
         int the_axis = the_selected_axis();
         if (the_axis == -2) {
             unselect_all();
@@ -439,6 +794,10 @@ public:
         select(the_axis);
     }
     void prev_axis() {
+        if (_angle_armed) {
+            next_axis();
+            return;
+        }
         int the_axis = the_selected_axis();
         if (the_axis == -2) {
             unselect_all();
@@ -490,7 +849,7 @@ public:
             return;
         }
         if (touchIsCenter()) {
-            push_scene(&jogHelpScene);
+            openAngleHelp();
             return;
         }
 
@@ -518,6 +877,7 @@ public:
         }
     }
     void onTouchHold() {
+        if (_angle_armed) return;
         // Select multiple axes
         if (touchX < 80) {
             int axis = which(touchX, touchY);
@@ -545,6 +905,10 @@ public:
     }
 
     e4_t mpg_move_distance(int delta) {
+        if (_angle_armed) {
+            const double path = static_cast<double>(delta) * angle_path_per_count();
+            return static_cast<e4_t>(std::llround(std::abs(path)));
+        }
         e4_t move = 0;
         for (int axis = 0; axis < num_axes; ++axis) {
             if (selected(axis)) {
@@ -565,11 +929,18 @@ public:
         std::string cmd("$J=G91");
         cmd += inInches ? "G20" : "G21";
         cmd += "F";
-        cmd += e4_to_cstr(feed, 0);
-        for (int axis = 0; axis < num_axes; ++axis) {
-            if (selected(axis)) {
-                cmd += profile_axis_char(axis);
-                cmd += e4_to_cstr(delta * distance(axis), inInches ? 3 : 2);
+        cmd += e4_to_cstr(_angle_armed ? angle_command_feed(feed) : feed, 0);
+        if (_angle_armed) {
+            e4_t x_command = 0;
+            e4_t z_move    = 0;
+            angle_increment_components(delta, x_command, z_move);
+            append_angle_axes(cmd, x_command, z_move);
+        } else {
+            for (int axis = 0; axis < num_axes; ++axis) {
+                if (selected(axis)) {
+                    cmd += profile_axis_char(axis);
+                    cmd += e4_to_cstr(delta * distance(axis), inInches ? 3 : 2);
+                }
             }
         }
         send_jog_line(cmd.c_str());
@@ -577,38 +948,48 @@ public:
     }
     void start_button_jog(bool negative) {
         // e.g. $J=G91F1000X-10000
-        e4_t total_distance = 0;
+        e4_t total_distance = _angle_armed ? static_cast<e4_t>(std::llround(angle_path_per_count())) : 0;
         int  n_axes         = 0;
-        for (int axis = 0; axis < num_axes; ++axis) {
-            if (selected(axis)) {
-                total_distance = e4_magnitude(total_distance, distance(axis));
-                ++n_axes;
+        if (!_angle_armed) {
+            for (int axis = 0; axis < num_axes; ++axis) {
+                if (selected(axis)) {
+                    total_distance = e4_magnitude(total_distance, distance(axis));
+                    ++n_axes;
+                }
             }
         }
 
-        e4_t feedrate = total_distance * 300;  // go 5x the highlighted distance in 1 second
         e4_t max_feed = e4_from_int(inInches ? 24 : 600);
-        if (feedrate > max_feed) {
-            feedrate = max_feed;
-        }
+        int64_t requested_feed = static_cast<int64_t>(total_distance) * 300;
+        e4_t feedrate = requested_feed > max_feed ? max_feed : static_cast<e4_t>(requested_feed);
 
         std::string cmd("$J=G91");
         cmd += inInches ? "G20" : "G21";
         cmd += "F";
-        cmd += e4_to_cstr(feedrate, 3);
-        for (int axis = 0; axis < num_axes; ++axis) {
-            if (selected(axis)) {
-                e4_t axis_distance;
-                if (n_axes == 1) {
-                    axis_distance = e4_from_int(inInches ? 200 : 5000);
-                } else {
-                    axis_distance = distance(axis) * 20;
+        cmd += e4_to_cstr(_angle_armed ? angle_command_feed(feedrate) : feedrate, 3);
+        if (_angle_armed) {
+            e4_t path = e4_from_int(inInches ? 200 : 5000);
+            if (negative) path = -path;
+            e4_t x_command = 0;
+            e4_t z_move    = 0;
+            angle_vector_for_path(path, x_command, z_move);
+            append_angle_axes(cmd, x_command, z_move);
+            reset_angle_residuals();
+        } else {
+            for (int axis = 0; axis < num_axes; ++axis) {
+                if (selected(axis)) {
+                    e4_t axis_distance;
+                    if (n_axes == 1) {
+                        axis_distance = e4_from_int(inInches ? 200 : 5000);
+                    } else {
+                        axis_distance = distance(axis) * 20;
+                    }
+                    if (negative) {
+                        axis_distance = -axis_distance;
+                    }
+                    cmd += profile_axis_char(axis);
+                    cmd += e4_to_cstr(axis_distance, 0);
                 }
-                if (negative) {
-                    axis_distance = -axis_distance;
-                }
-                cmd += profile_axis_char(axis);
-                cmd += e4_to_cstr(axis_distance, 0);
             }
         }
         send_jog_line(cmd.c_str());
@@ -660,6 +1041,7 @@ public:
             _last_cancel_ms = now;
             _jog_dir        = 0;
             _jog_drain_ms = now;
+            reset_angle_residuals();
             return;
         }
 
@@ -760,6 +1142,7 @@ public:
         if (!_dynamic_mode) {
             return false;
         }
+        if (_angle_armed) return _dist_index[_angle_reference_axis] >= num_digits();
         for (int axis = 0; axis < num_axes; axis++) {
             if (selected(axis) && _dist_index[axis] >= num_digits()) {
                 return true;
@@ -769,6 +1152,10 @@ public:
     }
 
     void onEncoder(int delta) {
+        if (_angle_armed && state != Idle && state != Jog) {
+            angleSafetyCheck();
+            return;
+        }
         _mpg_accum += delta;
         _last_mpg_tick_ms = millis();
         if (dynamic_jog_active()) {
@@ -780,9 +1167,11 @@ public:
 
     void onPoll() override {
         if (state == Disconnected) {
+            if (_angle_armed) disarm_angle(false, "Link lost; disarmed");
             reset_jog_runtime();
             return;
         }
+        angleSafetyCheck();
         if (dynamic_jog_active()) {
             service_mpg();
             // Stop jogging once the dial has been still long enough
@@ -819,10 +1208,24 @@ public:
         request_redisplay();
     }
     void onAlarm() {
+        if (_angle_armed) disarm_angle(true, "Alarm; disarmed");
+        request_redisplay();
+    }
+    void onError(const char* errstr) override {
+        if (_angle_armed) {
+            std::string message = "Rejected";
+            if (errstr && errstr[0]) message += std::string(": ") + errstr;
+            disarm_angle(true, message.c_str());
+        }
+        request_redisplay();
+    }
+    void onStateChange(state_t) override {
+        angleSafetyCheck();
         request_redisplay();
     }
     void onExit() {
         cancel_jog();
+        if (!_opening_angle_help) disarm_angle(false);
     }
 } multiJogScene;
 
@@ -830,5 +1233,20 @@ void diagnostic_preview_jog(int selection) {
     multiJogScene.diagnosticPreview(selection);
 }
 
+void diagnostic_preview_jog_angle_menu(int state) {
+    jogHelpScene.diagnosticPreview(state);
+}
+
 bool jog_dynamic_mode() { return multiJogScene.dynamicMode(); }
 void jog_toggle_mode() { multiJogScene.toggleMode(); }
+bool jog_angle_available() { return multiJogScene.angleAvailable(); }
+bool jog_angle_selecting() { return multiJogScene.angleSelecting(); }
+bool jog_angle_armed() { return multiJogScene.angleArmed(); }
+int jog_angle_display_degrees() { return multiJogScene.angleDisplayDegrees(); }
+int jog_angle_path_digit() { return multiJogScene.anglePathDigit(); }
+int jog_angle_reference_axis() { return multiJogScene.angleReferenceAxis(); }
+const char* jog_angle_message() { return multiJogScene.angleMessage(); }
+void jog_angle_adjust(int delta) { multiJogScene.adjustAngle(delta); }
+void jog_angle_red_action() { multiJogScene.angleRedAction(); }
+void jog_angle_cancel_selection() { multiJogScene.cancelAngleSelection(); }
+void jog_angle_safety_check() { multiJogScene.angleSafetyCheck(); }

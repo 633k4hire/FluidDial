@@ -96,6 +96,12 @@ static uint32_t         _wifi_connect_start_ms    = 0;        // millis() when W
 static uint8_t          _handshake_timeout_count  = 0;        // consecutive 4-way handshake timeouts; real auth fail after threshold
 static uint8_t          _wifi_reconnect_attempts  = 0;
 static bool             _wifi_auth_failure        = false;
+static volatile bool    _wifi_ignore_disconnect_events = false;
+static volatile uint8_t _wifi_last_disconnect_reason = 0;
+static volatile uint32_t _wifi_association_attempts = 0;
+static volatile uint32_t _wifi_driver_resets = 0;
+static volatile uint32_t _wifi_soft_reconnects = 0;
+static volatile uint32_t _wifi_ignored_internal_disconnects = 0;
 
 enum class WifiReconnectPhase : uint8_t {
     Idle,
@@ -1608,6 +1614,19 @@ WiFiConfig wifi_active_config() {
     return _active_cfg;
 }
 
+WiFiConnectionDiagnostics wifi_connection_diagnostics() {
+    WiFiConnectionDiagnostics value {};
+    value.stack_started                = _wifi_stack_started;
+    value.connected                    = WiFi.status() == WL_CONNECTED;
+    value.reconnect_attempts           = _wifi_reconnect_attempts;
+    value.last_disconnect_reason       = _wifi_last_disconnect_reason;
+    value.association_attempts         = _wifi_association_attempts;
+    value.driver_resets                = _wifi_driver_resets;
+    value.soft_reconnects              = _wifi_soft_reconnects;
+    value.ignored_internal_disconnects = _wifi_ignored_internal_disconnects;
+    return value;
+}
+
 int wifi_signal_bars() {
     if (!wifi_is_connected()) return 0;
     int rssi = WiFi.RSSI();
@@ -1622,7 +1641,13 @@ int wifi_signal_bars() {
 // Called from the WiFi task — only set a flag; UI work happens in wifi_poll().
 
 static void onWiFiDisconnect(WiFiEvent_t event, WiFiEventInfo_t info) {
-    _wifi_disconnect_reason = info.wifi_sta_disconnected.reason;
+    const uint8_t reason = info.wifi_sta_disconnected.reason;
+    if (_wifi_ignore_disconnect_events) {
+        ++_wifi_ignored_internal_disconnects;
+        return;
+    }
+    _wifi_last_disconnect_reason = reason;
+    _wifi_disconnect_reason      = reason;
 }
 
 static void ensure_wifi_event_registered() {
@@ -1673,10 +1698,18 @@ static void begin_wifi_reconnect(uint32_t now) {
     }
 
     WiFi.setAutoReconnect(false);
-    // A full driver restart every second failed association clears the ESP32
-    // station state that can otherwise remain wedged until a power cycle.
-    bool restart_driver = (_wifi_reconnect_attempts % 2) == 0;
+    // The Maijker uses WiFi only for OTA/diagnostics, so spend the extra second
+    // and fully reset a wedged radio on every failed association. Generic WiFi
+    // transports use a full reset first, then alternate with a soft retry.
+    bool restart_driver = _secure_ota_only || (_wifi_reconnect_attempts % 2) == 1;
+    _wifi_ignore_disconnect_events = true;
+    _wifi_disconnect_reason        = 0;
     WiFi.disconnect(restart_driver, false);
+    if (restart_driver) {
+        ++_wifi_driver_resets;
+    } else {
+        ++_wifi_soft_reconnects;
+    }
     _wifi_reconnect_phase = restart_driver ? WifiReconnectPhase::DriverOff
                                            : WifiReconnectPhase::WaitingToBegin;
     _wifi_reconnect_phase_at = now + (restart_driver ? WIFI_DRIVER_OFF_MS
@@ -1700,7 +1733,12 @@ static void service_wifi_reconnect(uint32_t now) {
         return;
     }
 
+    // The internal teardown has had its complete settle window. Discard its
+    // callback before observing genuine failures from the new association.
+    _wifi_disconnect_reason        = 0;
+    _wifi_ignore_disconnect_events = false;
     WiFi.begin(_active_cfg.ssid, _active_cfg.password[0] ? _active_cfg.password : nullptr);
+    ++_wifi_association_attempts;
     _wifi_connect_start_ms    = now;
     _wifi_reconnect_phase     = WifiReconnectPhase::Idle;
     _wifi_reconnect_phase_at  = 0;
@@ -1777,14 +1815,20 @@ void wifi_init(bool auto_ap) {
     ensure_wifi_event_registered();
 
     WiFi.persistent(false);
-    WiFi.disconnect(true);  // Ensure clean driver state (especially after AP mode).
-    delay(100);
-    WiFi.mode(WIFI_STA);
-    WiFi.setSleep(false);
-
     WiFi.setAutoReconnect(false);
-    WiFi.begin(cfg.ssid, cfg.password[0] ? cfg.password : nullptr);
-    _wifi_connect_start_ms = millis();
+
+    // Startup must use the same proven driver-off/settle sequence as recovery.
+    // Calling WiFi.begin() only 100 ms after disconnect(true) lets the teardown
+    // callback race the new association and was responsible for alternating
+    // successful boots on the installed M5Dial.
+    _wifi_ignore_disconnect_events = true;
+    _wifi_disconnect_reason        = 0;
+    _wifi_ignore_disconnect_events = true;
+    _wifi_disconnect_reason        = 0;
+    WiFi.disconnect(true, false);
+    ++_wifi_driver_resets;
+    _wifi_reconnect_phase    = WifiReconnectPhase::DriverOff;
+    _wifi_reconnect_phase_at = millis() + WIFI_DRIVER_OFF_MS;
 }
 
 void wifi_poll() {
@@ -1923,7 +1967,9 @@ void wifi_poll() {
             if (new_msg) {
                 if (stop_driver) {
                     WiFi.setAutoReconnect(false);
-                    WiFi.disconnect(false);
+                    _wifi_ignore_disconnect_events = true;
+                    _wifi_disconnect_reason        = 0;
+                    WiFi.disconnect(false, false);
                 }
                 bool changed = (_wifi_error_msg != new_msg);
                 _wifi_error_msg = new_msg;

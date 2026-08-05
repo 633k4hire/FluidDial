@@ -20,6 +20,19 @@ struct WiFiConfig {
     bool valid;
 };
 
+struct WiFiConnectionDiagnostics {
+    bool     stack_started;
+    bool     connected;
+    uint8_t  reconnect_attempts;
+    uint8_t  last_disconnect_reason;
+    uint32_t association_attempts;
+    uint32_t driver_resets;
+    uint32_t soft_reconnects;
+    uint32_t ignored_internal_disconnects;
+};
+
+WiFiConnectionDiagnostics wifi_connection_diagnostics();
+
 // Initialise WiFi. If no credentials saved and auto_ap is true, starts AP setup mode.
 void wifi_init(bool auto_ap = true);
 

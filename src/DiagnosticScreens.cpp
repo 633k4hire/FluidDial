@@ -1,6 +1,7 @@
 #include "DiagnosticScreens.h"
 
 #include "Scene.h"
+#include "LatheManualScene.h"
 
 #include <cstring>
 
@@ -8,6 +9,7 @@ extern Scene menuScene;
 extern Scene statusScene;
 extern Scene homingScene;
 extern Scene multiJogScene;
+extern Scene jogHelpScene;
 extern Scene probingScene;
 extern Scene toolchangeScene;
 extern Scene macroMenu;
@@ -22,6 +24,7 @@ extern Scene machineHealthScene;
 void diagnostic_preview_main_menu(int selection);
 void diagnostic_preview_homing(int selection);
 void diagnostic_preview_jog(int selection);
+void diagnostic_preview_jog_angle_menu(int state);
 void diagnostic_preview_probe(int selection);
 void diagnostic_preview_tools(int selection);
 void diagnostic_preview_about(int page);
@@ -83,6 +86,10 @@ namespace {
         { "jog-x", &multiJogScene, diagnostic_preview_jog, 0 },
         { "jog-z", &multiJogScene, diagnostic_preview_jog, 1 },
         { "jog-xz", &multiJogScene, diagnostic_preview_jog, 2 },
+        { "jog-angle-off", &jogHelpScene, diagnostic_preview_jog_angle_menu, 0 },
+        { "jog-angle-selecting", &jogHelpScene, diagnostic_preview_jog_angle_menu, 1 },
+        { "jog-angle-armed", &jogHelpScene, diagnostic_preview_jog_angle_menu, 2 },
+        { "jog-angle-active", &multiJogScene, diagnostic_preview_jog, 3 },
         { "probe-offset", &probingScene, diagnostic_preview_probe, 0 },
         { "probe-travel", &probingScene, diagnostic_preview_probe, 1 },
         { "probe-feed", &probingScene, diagnostic_preview_probe, 2 },
@@ -97,6 +104,16 @@ namespace {
         { "files", &fileSelectScene, nullptr, 0 },
 #endif
         { "macros", &macroMenu, nullptr, 0 },
+        { "manual-menu", &latheManualMenuScene, diagnostic_preview_lathe_manual, 0 },
+        { "manual-angle", &latheAngleJogScene, nullptr, 0 },
+        { "manual-spindle", &latheSpindleScene, nullptr, 0 },
+        { "manual-c-position", &latheCPositionScene, nullptr, 0 },
+        { "manual-thread-proof", &latheThreadProofScene, nullptr, 0 },
+        { "manual-face", &latheFaceScene, nullptr, 0 },
+        { "manual-turn", &latheTurnScene, nullptr, 0 },
+        { "manual-chamfer", &latheChamferScene, nullptr, 0 },
+        { "manual-groove", &latheGrooveScene, nullptr, 0 },
+        { "manual-peck", &lathePeckScene, nullptr, 0 },
         { "about", &aboutScene, nullptr, 0 },
         { "about-device", &aboutScene, diagnostic_preview_about, 0 },
         { "about-controls", &aboutScene, diagnostic_preview_about, 1 },

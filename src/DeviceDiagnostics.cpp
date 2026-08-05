@@ -6,6 +6,7 @@
 #include "FluidNCModel.h"
 #include "LatheModel.h"
 #include "System.h"
+#include "WiFiConnection.h"
 
 #include <Esp.h>
 #include <esp_system.h>
@@ -51,6 +52,7 @@ namespace {
 
 std::string device_diagnostics_json() {
     const auto transport = fluidnc_transport_diagnostics();
+    const auto wifi      = wifi_connection_diagnostics();
     const auto& link     = fluidnc_link_diagnostics();
     const auto& sync     = lathe_sync_diagnostics();
     const auto& status   = lathe_status();
@@ -62,6 +64,14 @@ std::string device_diagnostics_json() {
         std::to_string(static_cast<int>(esp_reset_reason())) +
         ",\"free_heap\":" + std::to_string(ESP.getFreeHeap()) +
         ",\"min_free_heap\":" + std::to_string(ESP.getMinFreeHeap()) +
+        ",\"wifi\":{\"stack_started\":" + (wifi.stack_started ? "true" : "false") +
+        ",\"connected\":" + (wifi.connected ? "true" : "false") +
+        ",\"reconnect_attempts\":" + std::to_string(wifi.reconnect_attempts) +
+        ",\"last_disconnect_reason\":" + std::to_string(wifi.last_disconnect_reason) +
+        ",\"association_attempts\":" + std::to_string(wifi.association_attempts) +
+        ",\"driver_resets\":" + std::to_string(wifi.driver_resets) +
+        ",\"soft_reconnects\":" + std::to_string(wifi.soft_reconnects) +
+        ",\"ignored_internal_disconnects\":" + std::to_string(wifi.ignored_internal_disconnects) + "}" +
         ",\"fluidnc\":{\"state\":\"" + jsonEscape(my_state_string) +
         "\",\"state_id\":" + std::to_string(static_cast<int>(state)) +
         ",\"last_alarm\":" + std::to_string(lastAlarm) +

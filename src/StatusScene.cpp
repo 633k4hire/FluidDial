@@ -2,6 +2,7 @@
 // Use of this source code is governed by a GPLv3 license that can be found in the LICENSE file.
 
 #include "Scene.h"
+#include "HomingScene.h"
 #include "LatheModel.h"
 #include "MachineProfile.h"
 #include "MachineStateActions.h"
@@ -85,7 +86,9 @@ private:
         for (int axis = 0; axis < profile_axis_count(); ++axis) {
             char axis_char = profile_axis_char(axis);
             if (axis_char == 'X' || axis_char == 'Z') {
-                dro.draw(axis, -1, true);
+                // Use the same homed-axis state as the Home scene so homing
+                // from either entry point is reflected immediately in both.
+                dro.drawHoming(axis, true, is_axis_homed(axis));
             }
         }
 

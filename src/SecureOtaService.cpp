@@ -41,6 +41,7 @@ namespace {
     bool routesRegistered = false;
     bool serviceReady = false;
     uint32_t physicalWindowUntil = 0;
+    uint32_t screenRevision = 0;
 
     char deviceId[32] = {};
     char deviceIdShort[17] = {};
@@ -516,6 +517,7 @@ namespace {
         server->sendHeader("Cache-Control", "no-store");
         if (screenId.length()) {
             server->sendHeader("X-TAMS-Screen-Id", screenId);
+            server->sendHeader("X-TAMS-Screen-Revision", String(++screenRevision));
             server->sendHeader("Content-Disposition", "attachment; filename=\"m5dial-" + screenId + ".bmp\"");
         } else {
             server->sendHeader("Content-Disposition", "attachment; filename=\"m5dial-current.bmp\"");

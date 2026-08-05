@@ -10,6 +10,7 @@
 #define WRAP_FILE_LIST
 
 extern Scene filePreviewScene;
+extern Scene macroMenu;
 
 extern Scene& jogScene;
 
@@ -24,6 +25,18 @@ private:
     std::string      dirName         = "/sd";
     int              dirLevel        = 0;
     bool             _selecting_file = false;
+
+    // Lathe manual helpers replace the main-menu Macros icon.  Keep custom
+    // operator macros alongside SD work, where an operator naturally goes to
+    // choose work to run.  This is a virtual root item; it is never sent to
+    // FluidNC as a filename.
+    bool macro_selected() const { return dirLevel == 0 && _selected_file == 0; }
+    int  file_selection_offset() const { return dirLevel == 0 ? 1 : 0; }
+    int  entry_count() const { return (int)fileVector.size() + file_selection_offset(); }
+    int  selected_file_index() const { return _selected_file - file_selection_offset(); }
+
+    bool is_macro_entry(int entry) const { return dirLevel == 0 && entry == 0; }
+    int  file_index_for_entry(int entry) const { return entry - file_selection_offset(); }
 
     const char* format_size(size_t size) {
         const int   buflen = 30;
@@ -62,8 +75,14 @@ public:
         if (state != Idle) {
             return;
         }
-        if (fileVector.size()) {
-            fileInfo                                 = fileVector[_selected_file];
+        if (macro_selected()) {
+            push_scene(&macroMenu);
+            ackBeep();
+            return;
+        }
+        int file_index = selected_file_index();
+        if (file_index >= 0 && file_index < (int)fileVector.size()) {
+            fileInfo                                 = fileVector[file_index];
             prevSelect[(int)(prevSelect.size() - 1)] = _selected_file;
             if (fileInfo.isDir()) {
                 prevSelect.push_back(0);
@@ -108,6 +127,9 @@ public:
     }
     void onFilesList() override {
         _selected_file = prevSelect.back();
+        if (_selected_file < 0 || _selected_file >= entry_count()) {
+            _selected_file = 0;
+        }
         reDisplay();
     }
 
@@ -124,8 +146,13 @@ public:
 
         if (state == Idle) {
             redLabel = dirLevel ? "Up.." : "Refresh";
-            if (fileVector.size()) {
-                grnLabel = fileVector[_selected_file].isDir() ? "Down.." : "Load";
+            if (macro_selected()) {
+                grnLabel = "Macros";
+            } else {
+                int file_index = selected_file_index();
+                if (file_index >= 0 && file_index < (int)fileVector.size()) {
+                    grnLabel = fileVector[file_index].isDir() ? "Down.." : "Load";
+                }
             }
         }
 
@@ -192,18 +219,19 @@ public:
         drawMenuTitle(current_scene->name());
         std::string fName;
 
-        int fdIter = _selected_file - 1;  // first file in display list
+        int fdIter      = _selected_file - 1;  // first entry in display list
+        int entry_count = this->entry_count();
 
         for (int display_slot = 0; display_slot < N_DISPLAYED_FILENAMES; display_slot++, fdIter++) {
             auto fnlayout = fnlayouts[display_slot];
 
 #ifdef WRAP_FILE_LIST
-            if (fileVector.size() > 2) {
+            if (entry_count > 2) {
                 if (fdIter < 0) {
-                    // last file first in list
-                    fdIter = fileVector.size() - 1;
-                } else if (fdIter > fileVector.size() - 1) {
-                    // first file last in list
+                    // last entry first in list
+                    fdIter = entry_count - 1;
+                } else if (fdIter > entry_count - 1) {
+                    // first entry last in list
                     fdIter = 0;
                 }
             }
@@ -213,8 +241,12 @@ public:
             }
 
             fName = "< no files >";
-            if (fileVector.size()) {
-                fName = fileVector[fdIter].fileName;
+            bool macro_entry = is_macro_entry(fdIter);
+            int  file_index  = file_index_for_entry(fdIter);
+            if (macro_entry) {
+                fName = "Macros";
+            } else if (file_index >= 0 && file_index < (int)fileVector.size()) {
+                fName = fileVector[file_index].fileName;
             }
             int middle_slot = (N_DISPLAYED_FILENAMES - 1) / 2;
             int offset      = middle_slot - display_slot;
@@ -225,11 +257,17 @@ public:
                 std::string fInfoT = "";  // file info top line
                 std::string fInfoB = "";  // File info bottom line
                 int         ext    = fName.rfind('.');
-                if (fileVector.size()) {
-                    if (fileVector[_selected_file].isDir()) {
+                if (macro_entry) {
+                    fInfoT = "Manual";
+                    fInfoB = "Custom macros";
+                    tcolor = MAROON;
+                } else {
+                    int selected_file_index = this->selected_file_index();
+                    if (selected_file_index >= 0 && selected_file_index < (int)fileVector.size()
+                        && fileVector[selected_file_index].isDir()) {
                         fInfoB = "Folder";
                         tcolor = BLUE;
-                    } else {
+                    } else if (selected_file_index >= 0 && selected_file_index < (int)fileVector.size()) {
                         if (ext > 0) {
                             fInfoT = fName.substr(ext, fName.length());
                             fInfoT += " file";
@@ -243,7 +281,7 @@ public:
                 // in the larger list of files.
                 // If there are at most three files, all are displayed, without
                 // a scroll indicator.
-                if (fileVector.size() > 3) {
+                if (entry_count > 3) {
                     int width  = 8;
                     int radius = width / 2;
                     if (round_display) {
@@ -253,7 +291,7 @@ public:
 
                         int x, y;
                         int arc_degrees = 100;
-                        int divisor     = fileVector.size() - 1;
+                        int divisor     = entry_count - 1;
                         int increment   = arc_degrees / divisor;
                         int start_angle = (arc_degrees / 2);
                         int angle       = start_angle - (_selected_file * arc_degrees) / divisor;
@@ -264,7 +302,7 @@ public:
                         int height       = display_short_side() - 30;
                         int inner_height = height - width;
                         int middle       = inner_height / 2;
-                        int divisor      = fileVector.size() - 1;
+                        int divisor      = entry_count - 1;
                         int y            = width + inner_height * _selected_file / divisor;
                         drawRect(x - radius, radius, width + 2, height, radius, DARKGREY);
                         drawFilledCircle(x, y, radius + 1, LIGHTGREY);
@@ -277,11 +315,11 @@ public:
                 auto_text(fName, Point(x_offset, 0), fnlayout._w, tcolor, MEDIUM, middle_center);
 
 #ifdef WRAP_FILE_LIST
-                if (fileVector.size() >= N_DISPLAYED_FILENAMES) {
+                if (entry_count >= N_DISPLAYED_FILENAMES) {
                     continue;
                 }
 #endif
-                if (fdIter >= (int)(fileVector.size() - 1)) {
+                if (fdIter >= entry_count - 1) {
                     break;
                 }
             } else {
@@ -313,20 +351,21 @@ public:
 
     void scroll(int updown) {
         int nextSelect = _selected_file + updown;
+        int entries    = entry_count();
 #ifdef WRAP_FILE_LIST
-        if (fileVector.size() < 3) {
-            if (nextSelect < 0 || nextSelect > (int)(fileVector.size() - 1)) {
+        if (entries < 3) {
+            if (nextSelect < 0 || nextSelect > entries - 1) {
                 return;
             }
         } else {
             if (nextSelect < 0) {
-                nextSelect = fileVector.size() - 1;
-            } else if (nextSelect > (int)(fileVector.size() - 1)) {
+                nextSelect = entries - 1;
+            } else if (nextSelect > entries - 1) {
                 nextSelect = 0;
             }
         }
 #else
-        if (nextSelect < 0 || nextSelect > (int)(fileVector.size() - 1)) {
+        if (nextSelect < 0 || nextSelect > entries - 1) {
             return;
         }
 #endif

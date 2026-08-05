@@ -178,11 +178,14 @@ void init_fnc_uart(int uart_num, int tx_pin, int rx_pin) {
         while (1) {}
         return;
     };
-    // ESP421 and status bursts can exceed the old 256-byte queue. A 4 KiB
-    // queue plus FIFO-level XON/XOFF prevents truncated JSON and sticky UI
-    // state. ESP-IDF takes uint8_t thresholds here, so keep them below 128.
+    // ESP421 and status bursts can exceed the old 256-byte queue.  A 4 KiB
+    // queue gives the application enough headroom to drain a complete reply.
+    // Do not enable UART XON/XOFF here: sending XON makes FluidNC enable its
+    // synchronous TX flow-control path, and the ESP32 UART's 96-byte XOFF
+    // threshold can hold a multi-kilobyte ESP421 response long enough to trip
+    // the controller watchdog while the pendant is briefly busy.
     uart_driver_install(fnc_uart_port, 4096, 0, 0, NULL, ESP_INTR_FLAG_IRAM);
-    uart_set_sw_flow_ctrl(fnc_uart_port, true, 32, 96);
+    uart_set_sw_flow_ctrl(fnc_uart_port, false, 0, 0);
     uint32_t baud;
     uart_get_baudrate(fnc_uart_port, &baud);
     bootlog_printf("uart: num=%d tx=%d rx=%d baud=%lu", uart_num, tx_pin, rx_pin, (unsigned long)baud);
@@ -204,8 +207,8 @@ void resetFlowControl() {
 #ifdef USE_WIFI
     if (!wifi_use_uart_mode()) return;  // no-op over WiFi/Telnet
 #endif
-    fnc_putchar(0x11);
-    uart_ll_force_xon(fnc_uart_port);
+    // Retained as a transport-reset hook.  The 4 KiB receive queue is drained
+    // in the application loop, so no software-flow-control character is sent.
 }
 
 extern "C" int milliseconds() {

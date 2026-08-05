@@ -3,6 +3,7 @@
 #include "LatheModel.h"
 #include "MachineProfile.h"
 #include "MachineHealthScene.h"
+#include "LatheManualScene.h"
 #ifdef USE_WMB_FSS
 #    include "FileMenu.h"
 #endif
@@ -74,6 +75,7 @@ IB filesButton("Files", &fileSelectScene, "filestp.png");
 #endif
 
 IB controlButton("Macros", &macroMenu, "macrostp.png");
+IB manualLatheButton("Manual", &latheManualMenuScene, "macrostp.png");
 #if defined(USE_WIFI) && !defined(MAIJKER_XZACT_LATHE)
 // WiFi scene replaces About button; will reintroduce display orientation later
 extern WiFiSetupScene wifiSetupScene;
@@ -95,6 +97,7 @@ public:
         toolchangeButton.disable();
         filesButton.enable();
         controlButton.disable();
+        manualLatheButton.disable();
         setupButton.enable();
     }
     void enableIcons() {
@@ -105,9 +108,19 @@ public:
         toolchangeButton.enable();
         filesButton.enable();
         controlButton.enable();
+        manualLatheButton.enable();
         setupButton.enable();
     }
     void syncIconAvailability() {
+        if (_items.size() > 6) {
+            Item* desired = machine_profile_is_lathe() ? static_cast<Item*>(&manualLatheButton)
+                                                       : static_cast<Item*>(&controlButton);
+            if (_items[6] != desired) {
+                _items[6]->unhighlight();
+                setItem(6, desired);
+                if (_selected == 6) desired->highlight();
+            }
+        }
         if (state == Disconnected || !operator_navigation_available()) {
             disableMachineActions();
             return;
@@ -120,6 +133,7 @@ public:
                 probeButton.disable();
                 toolchangeButton.disable();
                 controlButton.disable();
+                manualLatheButton.disable();
             }
         }
     }

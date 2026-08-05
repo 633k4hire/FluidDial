@@ -239,7 +239,7 @@ private:
         if (_confirm_tool == 5) {
             _confirm_message += " Probe";
         }
-        _confirm_message += "?\nSends T" + std::to_string(_confirm_tool) + " + M6";
+        _confirm_message += "?\nEnable + T" + std::to_string(_confirm_tool) + " M6 + release";
         push_scene(&confirmScene, (void*)_confirm_message.c_str());
     }
 

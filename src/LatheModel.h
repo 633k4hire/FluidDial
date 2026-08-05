@@ -11,6 +11,16 @@ struct LatheStatus {
     bool        known                 = false;
     bool        available             = false;
     bool        enabled               = false;
+    std::string spindle_state;
+    std::string shared_chuck_mode;
+    std::string spindle_drive;
+    float       spindle_commanded_rpm = 0.0f;
+    float       spindle_open_loop_rpm = 0.0f;
+    float       spindle_maximum_rpm   = 0.0f;
+    int         spindle_steps_rev     = 0;
+    bool        c_position_dead_reckoned = false;
+    bool        threading_enabled     = false;
+    bool        threading_feedback_ready = false;
     std::string spindle_speed_mode;
     bool        diameter_mode         = false;
     std::string feed_mode;

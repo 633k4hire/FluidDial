@@ -900,7 +900,12 @@ extern "C" void handle_msg(char* command, char* arguments) {
 #if defined(USE_WIFI) && defined(ARDUINO)
         secure_ota_note_uart_link_reset();
 #endif
-        state = Disconnected;
+        // Keep the enum, display string, jog accounting, and lathe-detail
+        // synchronizer consistent.  Assigning only `state` leaves
+        // my_state_string at its pre-reset value (often "Alarm").  The first
+        // identical post-reset status report is then discarded as unchanged,
+        // trapping the pendant in the numeric Disconnected state forever.
+        set_disconnected_state();
         act_on_state_change();
     }
     if (strcmp(command, "Files changed") == 0) {

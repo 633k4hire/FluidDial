@@ -28,6 +28,7 @@ static int                s_pending_tool_change    = 0;
 static OperatorLinkState  s_operator_link_state   = OperatorLinkState::Disconnected;
 
 static const uint32_t LATHE_M6_TIMEOUT_MS              = 30000;
+static const uint32_t LATHE_TURRET_ENABLE_HOLD_MS      = 3000;
 static const uint32_t LATHE_COMMAND_TIMEOUT_MS         = 8000;
 static const uint32_t LATHE_COMMAND_REFRESH_MS         = 1000;
 static const uint32_t LATHE_COMMAND_STILL_WAITING_MS   = 5000;
@@ -37,6 +38,16 @@ static const uint32_t LATHE_STATUS_RETRY_MIN_MS         = 500;
 static const uint32_t LATHE_STATUS_RETRY_MAX_MS         = 4000;
 
 static void complete_command(int command, bool ok, const char* message, bool recoverable, bool timed_out, int target_tool = -1);
+
+static void hold_turret_enable() {
+    const uint32_t started_ms = millis();
+    while ((uint32_t)(millis() - started_ms) < LATHE_TURRET_ENABLE_HOLD_MS) {
+        // Keep the active transport and acknowledgement parser serviced while
+        // the shared DLC32 enable line holds the turret against its ratchet.
+        fnc_poll();
+        delay_ms(10);
+    }
+}
 
 static std::string lower_copy(const char* value) {
     std::string s = value ? value : "";
@@ -389,6 +400,26 @@ void lathe_set_status_value(const char* id, const char* value) {
     if (strcmp(id, "Lathe enabled") == 0) {
         s_pending_status.enabled = parse_bool(value);
         s_pending_status_saw_enabled = true;
+    } else if (strcmp(id, "Spindle state") == 0) {
+        s_pending_status.spindle_state = value ? value : "";
+    } else if (strcmp(id, "Shared chuck mode") == 0) {
+        s_pending_status.shared_chuck_mode = value ? value : "";
+    } else if (strcmp(id, "Spindle drive") == 0) {
+        s_pending_status.spindle_drive = value ? value : "";
+    } else if (strcmp(id, "Spindle commanded RPM") == 0) {
+        s_pending_status.spindle_commanded_rpm = parse_float(value);
+    } else if (strcmp(id, "Spindle open-loop RPM") == 0) {
+        s_pending_status.spindle_open_loop_rpm = parse_float(value);
+    } else if (strcmp(id, "Spindle maximum RPM") == 0) {
+        s_pending_status.spindle_maximum_rpm = parse_float(value);
+    } else if (strcmp(id, "Spindle steps/rev") == 0) {
+        s_pending_status.spindle_steps_rev = parse_int(value);
+    } else if (strcmp(id, "C position dead reckoned") == 0) {
+        s_pending_status.c_position_dead_reckoned = parse_bool(value);
+    } else if (strcmp(id, "Threading enabled") == 0) {
+        s_pending_status.threading_enabled = parse_bool(value);
+    } else if (strcmp(id, "Threading feedback ready") == 0) {
+        s_pending_status.threading_feedback_ready = parse_bool(value);
     } else if (strcmp(id, "Spindle speed mode") == 0) {
         s_pending_status.spindle_speed_mode = value ? value : "";
     } else if (strcmp(id, "Diameter mode") == 0) {
@@ -530,8 +561,19 @@ void lathe_change_tool(int tool) {
     }
     s_pending_tool_change = tool;
     begin_command(6, "Waiting for T/M6", tool);
+
+    // The Maijker DLC32 turret STEP/DIR signals use the controller's shared
+    // stepper enable. Idle normally releases that line, so bracket each
+    // confirmed tool change with explicit enable/disable commands. send_line()
+    // gates each new line on the previous acknowledgement. The second $ME is
+    // therefore an acknowledgement barrier for M6; once it is transmitted,
+    // the tool change has completed and the three-second seating hold begins.
+    send_line("$ME");
     send_linef("T%d", tool);
-    send_line("M6");
+    send_line("M6", LATHE_M6_TIMEOUT_MS);
+    send_line("$ME", LATHE_M6_TIMEOUT_MS);
+    hold_turret_enable();
+    send_line("$MD");
     request_lathe_status(true);
 }
 

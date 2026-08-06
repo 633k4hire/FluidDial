@@ -19,6 +19,16 @@ struct LatheStatus {
     float       spindle_maximum_rpm   = 0.0f;
     int         spindle_steps_rev     = 0;
     bool        c_position_dead_reckoned = false;
+    int         i2s_fifo_threshold    = 0;
+    int         i2s_fifo_reload       = 0;
+    uint32_t    i2s_underruns         = 0;
+    uint32_t    i2s_max_isr_gap_us    = 0;
+    uint32_t    i2s_max_isr_duration_us = 0;
+    float       c_pulse_requested_hz  = 0.0f;
+    float       c_pulse_emitted_hz    = 0.0f;
+    uint32_t    c_pulse_emitted_count = 0;
+    std::string c_pulse_ownership;
+    std::string c_reference;
     bool        threading_enabled     = false;
     bool        threading_feedback_ready = false;
     std::string spindle_speed_mode;

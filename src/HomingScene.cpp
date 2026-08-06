@@ -38,6 +38,10 @@ void set_axis_homed(int axis) {
     homed_axes |= 1 << axis;
     request_redisplay();
 }
+void clear_homed_axes() {
+    homed_axes = 0;
+    request_redisplay();
+}
 
 static bool homing_query_supported(int display_axis) {
     // This lathe's C coordinate represents the shared spindle/chuck. It has
@@ -58,7 +62,6 @@ void detect_homing_info() {
             homing_allows[machine_axis].init();
         }
     }
-    homed_axes = 0;
 }
 bool can_home(int i) {
     if (!homing_query_supported(i)) {

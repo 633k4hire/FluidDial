@@ -897,6 +897,7 @@ extern "C" void handle_msg(char* command, char* arguments) {
     }
     if (strcmp(command, "RST") == 0) {
         dbg_println("FluidNC Reset");
+        clear_homed_axes();
 #if defined(USE_WIFI) && defined(ARDUINO)
         secure_ota_note_uart_link_reset();
 #endif

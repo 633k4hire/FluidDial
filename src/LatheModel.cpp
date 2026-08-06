@@ -416,6 +416,26 @@ void lathe_set_status_value(const char* id, const char* value) {
         s_pending_status.spindle_steps_rev = parse_int(value);
     } else if (strcmp(id, "C position dead reckoned") == 0) {
         s_pending_status.c_position_dead_reckoned = parse_bool(value);
+    } else if (strcmp(id, "I2S FIFO threshold") == 0) {
+        s_pending_status.i2s_fifo_threshold = parse_int(value);
+    } else if (strcmp(id, "I2S FIFO reload") == 0) {
+        s_pending_status.i2s_fifo_reload = parse_int(value);
+    } else if (strcmp(id, "I2S underruns") == 0) {
+        s_pending_status.i2s_underruns = static_cast<uint32_t>(parse_int(value));
+    } else if (strcmp(id, "I2S max ISR gap us") == 0) {
+        s_pending_status.i2s_max_isr_gap_us = static_cast<uint32_t>(parse_int(value));
+    } else if (strcmp(id, "I2S max ISR duration us") == 0) {
+        s_pending_status.i2s_max_isr_duration_us = static_cast<uint32_t>(parse_int(value));
+    } else if (strcmp(id, "C pulse requested Hz") == 0) {
+        s_pending_status.c_pulse_requested_hz = parse_float(value);
+    } else if (strcmp(id, "C pulse emitted Hz") == 0) {
+        s_pending_status.c_pulse_emitted_hz = parse_float(value);
+    } else if (strcmp(id, "C pulse emitted count") == 0) {
+        s_pending_status.c_pulse_emitted_count = static_cast<uint32_t>(parse_int(value));
+    } else if (strcmp(id, "C pulse ownership") == 0) {
+        s_pending_status.c_pulse_ownership = value ? value : "";
+    } else if (strcmp(id, "C reference") == 0) {
+        s_pending_status.c_reference = value ? value : "";
     } else if (strcmp(id, "Threading enabled") == 0) {
         s_pending_status.threading_enabled = parse_bool(value);
     } else if (strcmp(id, "Threading feedback ready") == 0) {

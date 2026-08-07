@@ -786,7 +786,7 @@ def assert_maijker_build_contract() -> None:
     assert '"STOPPING gently"' in manual
     assert "static constexpr float Presets[4] = { 0.225f, 2.25f, 22.5f, 90.0f };" in manual
     assert "int         _preset_index   = 1;" in manual
-    assert ": 180000.0f;" in manual
+    assert ": 243000.0f;" in manual
     assert "std::fabs(degrees) * 1200.0f" in manual
 
     # Jog angle selection is full-circle and never persists its armed state.

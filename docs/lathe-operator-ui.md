@@ -195,7 +195,7 @@ sent to FluidNC as a filename.
   path. Arming requires confirmation. Dial detents provide precise moves and
   the red/green buttons provide hold-to-jog motion; releasing a button cancels
   its jog while leaving the compound armed.
-- **Spindle** edits 0-500 RPM in 10 RPM steps, capped by the C-stepper
+- **Spindle** edits 0-675 RPM in 10 RPM steps, capped by the C-stepper
   spindle's independent `maximum_rpm`. Touch selects CW/CCW, green
   confirms start or apply, and red always sends M5 immediately. Opposite
   direction is blocked until FluidNC reports the spindle stopped. The panel

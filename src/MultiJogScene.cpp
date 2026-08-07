@@ -992,7 +992,7 @@ public:
         const bool c_only = only_c_axis_selected();
         const uint32_t target_ms = c_only ? PRECISE_C_MOVE_MS : PRECISE_MOVE_MS;
         int64_t feed64 = (int64_t)move * 60000 / target_ms;
-        e4_t   f_max  = c_only ? e4_from_int(180000) : e4_from_int(inInches ? 24 : 600);
+        e4_t   f_max  = c_only ? e4_from_int(243000) : e4_from_int(inInches ? 24 : 600);
         return feed64 > f_max ? f_max : (e4_t)feed64;
     }
 

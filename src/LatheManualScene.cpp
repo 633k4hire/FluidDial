@@ -503,7 +503,7 @@ class SpindleScene : public Scene {
 
     int max_rpm() const {
         const float reported = lathe_status().spindle_maximum_rpm;
-        return std::max(10, (int)std::floor(reported > 0.0f ? reported : 500.0f));
+        return std::max(10, (int)std::floor(reported > 0.0f ? reported : 675.0f));
     }
 
     int min_rpm() const {
@@ -643,8 +643,8 @@ class CPositionScene : public Scene {
     }
 
     float positioning_feed(float degrees) const {
-        const float configured = c_axis_max_rate.known() ? strtof(c_axis_max_rate.get().c_str(), nullptr) : 180000.0f;
-        const float maximum    = configured > 0.0f ? configured : 180000.0f;
+        const float configured = c_axis_max_rate.known() ? strtof(c_axis_max_rate.get().c_str(), nullptr) : 243000.0f;
+        const float maximum    = configured > 0.0f ? configured : 243000.0f;
         // Rotary C detents target 50 ms while the planner remains responsible
         // for the configured 1500 RPM/s acceleration limit.
         return std::min(maximum, std::max(1.0f, std::fabs(degrees) * 1200.0f));

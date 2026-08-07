@@ -207,8 +207,8 @@ private:
     static const int DEFAULT_DIST_INDEX = 1;  // tenths
 #endif
     int          _dist_index[3] = { DEFAULT_DIST_INDEX, DEFAULT_DIST_INDEX, DEFAULT_DIST_INDEX };
-    int          max_index() { return 6; }  // 10^3 = 1000;
-    int          min_index() { return 0; }  // 10^3 = 1000;
+    int          max_index() const { return 6; }  // 10^3 = 1000;
+    int          min_index() const { return 0; }  // 10^3 = 1000;
     int          _selected_mask = 1 << 0;
     const int    num_axes       = 3;
     bool         _cancelling    = false;
@@ -226,6 +226,9 @@ private:
     // one over roughly 100 ms so a 0.01/0.1 mm jog does not hit the planner as
     // a maximum-feed start/stop impulse.
     static const uint32_t PRECISE_MOVE_MS = 100;
+    static const uint32_t PRECISE_C_MOVE_MS = 50;
+    static const e4_t     C_DYNAMIC_MIN_FEED = 180000000;  // 18000 deg/min = 50 RPM
+    static const e4_t     C_DYNAMIC_MAX_FEED = 900000000;  // 90000 deg/min = 250 RPM
 
     static const int      JOG_WINDOW = 8;
 
@@ -241,6 +244,7 @@ private:
     bool     _cancel_pending   = false;
     uint32_t _cancel_req_ms    = 0;
     uint32_t _last_cancel_ms   = 0;
+    uint32_t _last_lathe_status_ms = 0;
 
     // Lathe X/Z angle jogging.  The angle is persisted, while selecting and
     // armed are deliberately runtime-only.  X or Z remains the operator's
@@ -505,7 +509,52 @@ public:
         push_scene(&jogHelpScene);
     }
 
-    e4_t distance(int axis) { return e4_power10(_dist_index[axis] - num_digits()); }
+    bool rotary_c_axis(int axis) const {
+        return machine_profile_is_lathe() && profile_axis_char(axis) == 'C';
+    }
+
+    e4_t rotary_c_distance(int index) const {
+        switch (std::max(0, std::min(index, 3))) {
+            case 0: return 2250;    // 0.225 degrees, one 1/8 microstep
+            case 1: return 22500;   // 2.25 degrees, ten microsteps
+            case 2: return 225000;  // 22.5 degrees
+            default: return 900000; // 90 degrees
+        }
+    }
+
+    int axis_min_index(int axis) const { return rotary_c_axis(axis) ? 0 : min_index(); }
+    int axis_max_index(int axis) const { return rotary_c_axis(axis) ? 3 : max_index(); }
+
+    e4_t distance(int axis) {
+        return rotary_c_axis(axis) ? rotary_c_distance(_dist_index[axis])
+                                   : e4_power10(_dist_index[axis] - num_digits());
+    }
+
+    bool c_axis_selected() {
+        for (int axis = 0; axis < num_axes; ++axis) {
+            if (selected(axis) && rotary_c_axis(axis)) return true;
+        }
+        return false;
+    }
+
+    bool only_c_axis_selected() {
+        bool saw_c = false;
+        for (int axis = 0; axis < num_axes; ++axis) {
+            if (!selected(axis)) continue;
+            if (!rotary_c_axis(axis)) return false;
+            saw_c = true;
+        }
+        return saw_c;
+    }
+
+    bool c_axis_motion_blocked() {
+        if (!c_axis_selected()) return false;
+        if (!only_c_axis_selected()) return true;
+        const LatheStatus& lathe = lathe_status();
+        const bool spindle_stopped = lathe.spindle_state == "STOPPED" && !lathe.spindle_stopping;
+        const bool spindle_owns_chuck = lathe.shared_chuck_mode == "SPINDLE" || lathe.shared_chuck_mode == "spindle";
+        return !spindle_stopped || spindle_owns_chuck;
+    }
     void unselect_all() { _selected_mask = 0; }
     bool selected(int axis) { return _angle_armed ? axis == _angle_reference_axis : (_selected_mask & (1 << axis)); }
     bool only(int axis) { return !_angle_armed && _selected_mask == (1 << axis); }
@@ -614,6 +663,19 @@ public:
                 const bool highlighted = display_selected(axis);
                 dro.draw(axis, digit, highlighted);
             }
+            if (machine_profile_is_lathe()) {
+                for (int axis = 0; axis < num_axes; ++axis) {
+                    if (rotary_c_axis(axis)) {
+                        char c_step[40];
+                        snprintf(c_step, sizeof(c_step), "C step %s deg", e4_to_cstr(distance(axis), 3));
+                        const char* c_status = !only_c_axis_selected() ? "C jog must be alone" :
+                                               (c_axis_motion_blocked() ? "C locked: stop spindle" : c_step);
+                        centered_text(c_status,
+                                      177, c_axis_motion_blocked() ? RED : CYAN, TINY);
+                        break;
+                    }
+                }
+            }
             if (state == Jog) {
                 if (!_continuous) {
                     centered_text("Touch to cancel jog", 185, YELLOW, TINY);
@@ -647,26 +709,28 @@ public:
             zero_axes();
         }
         if (lathe_mode_active()) {
-            request_lathe_status();
+            request_lathe_status(true);
+            _last_lathe_status_ms = millis();
         }
         if (initPrefs()) {
             for (size_t axis = 0; axis < 3; axis++) {
                 getPref("DistanceDigit", axis, &_dist_index[axis]);
+                _dist_index[axis] = std::max(axis_min_index(axis), std::min(_dist_index[axis], axis_max_index(axis)));
             }
             getPref("JogMode", &_dynamic_mode);
             getPref("AngleDeg", &_angle_degrees);
 #ifdef MAIJKER_XZACT_LATHE
-            // Existing pendants may have the old 1 mm/detent default stored in
-            // NVS. Apply the jeweler-lathe 0.1 mm profile once, then preserve
-            // any later operator selection.
+            // Existing pendants may have linear defaults or the old generic C
+            // digit stored in NVS. Apply 0.1 mm to X/Z and rotary index 1
+            // (2.25 degrees) to C once, then preserve later selections.
             int gentle_jog_profile = 0;
-            getPref("GentleJogV1", &gentle_jog_profile);
+            getPref("GentleJogV2", &gentle_jog_profile);
             if (!gentle_jog_profile) {
                 for (size_t axis = 0; axis < 3; axis++) {
                     _dist_index[axis] = DEFAULT_DIST_INDEX;
                     setPref("DistanceDigit", axis, _dist_index[axis]);
                 }
-                setPref("GentleJogV1", 1);
+                setPref("GentleJogV2", 1);
             }
 #endif
         }
@@ -698,7 +762,7 @@ public:
         setPref("DistanceDigit", axis, value);
     }
     void increment_distance(int axis) {
-        if (_dist_index[axis] < max_index()) {
+        if (_dist_index[axis] < axis_max_index(axis)) {
             set_dist_index(axis, _dist_index[axis] + 1);
         }
     }
@@ -715,7 +779,7 @@ public:
         }
     }
     void decrement_distance(int axis) {
-        if (_dist_index[axis] > min_index()) {
+        if (_dist_index[axis] > axis_min_index(axis)) {
             set_dist_index(axis, _dist_index[axis] - 1);
         }
     }
@@ -735,15 +799,20 @@ public:
     void rotate_distance() {
         if (_angle_armed) {
             int next = _dist_index[_angle_reference_axis] + 1;
-            if (next >= max_index()) next = min_index();
+            if ((rotary_c_axis(_angle_reference_axis) && next > axis_max_index(_angle_reference_axis)) ||
+                (!rotary_c_axis(_angle_reference_axis) && next >= axis_max_index(_angle_reference_axis))) {
+                next = axis_min_index(_angle_reference_axis);
+            }
             set_dist_index(_angle_reference_axis, next);
             reset_angle_residuals();
             return;
         }
         for (int axis = 0; axis < num_axes; axis++) {
             if (selected(axis)) {
-                if (++_dist_index[axis] >= max_index()) {
-                    _dist_index[axis] = min_index();
+                ++_dist_index[axis];
+                if ((rotary_c_axis(axis) && _dist_index[axis] > axis_max_index(axis)) ||
+                    (!rotary_c_axis(axis) && _dist_index[axis] >= axis_max_index(axis))) {
+                    _dist_index[axis] = axis_min_index(axis);
                 }
             }
         }
@@ -920,14 +989,17 @@ public:
 
     e4_t precise_jog_feed(e4_t move) {
         // feed[units/min] = move[units] * 60000 ms/min / target duration[ms]
-        int64_t feed64 = (int64_t)move * 60000 / PRECISE_MOVE_MS;
-        e4_t   f_max  = e4_from_int(inInches ? 24 : 600);
+        const bool c_only = only_c_axis_selected();
+        const uint32_t target_ms = c_only ? PRECISE_C_MOVE_MS : PRECISE_MOVE_MS;
+        int64_t feed64 = (int64_t)move * 60000 / target_ms;
+        e4_t   f_max  = c_only ? e4_from_int(180000) : e4_from_int(inInches ? 24 : 600);
         return feed64 > f_max ? f_max : (e4_t)feed64;
     }
 
     void send_mpg_jog(int delta, e4_t feed) {
         std::string cmd("$J=G91");
-        cmd += inInches ? "G20" : "G21";
+        const bool c_only = only_c_axis_selected();
+        cmd += c_only ? "G21" : (inInches ? "G20" : "G21");
         cmd += "F";
         cmd += e4_to_cstr(_angle_armed ? angle_command_feed(feed) : feed, 0);
         if (_angle_armed) {
@@ -939,7 +1011,7 @@ public:
             for (int axis = 0; axis < num_axes; ++axis) {
                 if (selected(axis)) {
                     cmd += profile_axis_char(axis);
-                    cmd += e4_to_cstr(delta * distance(axis), inInches ? 3 : 2);
+                    cmd += e4_to_cstr(delta * distance(axis), rotary_c_axis(axis) ? 4 : (inInches ? 3 : 2));
                 }
             }
         }
@@ -947,6 +1019,10 @@ public:
         _mpg_jogging = true;
     }
     void start_button_jog(bool negative) {
+        if (c_axis_motion_blocked()) {
+            request_lathe_status(true);
+            return;
+        }
         // e.g. $J=G91F1000X-10000
         e4_t total_distance = _angle_armed ? static_cast<e4_t>(std::llround(angle_path_per_count())) : 0;
         int  n_axes         = 0;
@@ -959,12 +1035,13 @@ public:
             }
         }
 
-        e4_t max_feed = e4_from_int(inInches ? 24 : 600);
-        int64_t requested_feed = static_cast<int64_t>(total_distance) * 300;
+        const bool c_only = only_c_axis_selected();
+        e4_t max_feed = c_only ? C_DYNAMIC_MAX_FEED : e4_from_int(inInches ? 24 : 600);
+        int64_t requested_feed = c_only ? C_DYNAMIC_MAX_FEED : static_cast<int64_t>(total_distance) * 300;
         e4_t feedrate = requested_feed > max_feed ? max_feed : static_cast<e4_t>(requested_feed);
 
         std::string cmd("$J=G91");
-        cmd += inInches ? "G20" : "G21";
+        cmd += c_only ? "G21" : (inInches ? "G20" : "G21");
         cmd += "F";
         cmd += e4_to_cstr(_angle_armed ? angle_command_feed(feedrate) : feedrate, 3);
         if (_angle_armed) {
@@ -979,7 +1056,9 @@ public:
             for (int axis = 0; axis < num_axes; ++axis) {
                 if (selected(axis)) {
                     e4_t axis_distance;
-                    if (n_axes == 1) {
+                    if (rotary_c_axis(axis)) {
+                        axis_distance = e4_from_int(5000);
+                    } else if (n_axes == 1) {
                         axis_distance = e4_from_int(inInches ? 200 : 5000);
                     } else {
                         axis_distance = distance(axis) * 20;
@@ -1024,6 +1103,11 @@ public:
         if (_mpg_accum == 0) {
             return;
         }
+        if (c_axis_motion_blocked()) {
+            _mpg_accum = 0;
+            request_lathe_status(true);
+            return;
+        }
         uint32_t now = millis();
         if (!force && (now - _last_mpg_ms) < MPG_INTERVAL_MS) {
             return;
@@ -1058,8 +1142,9 @@ public:
         // Velocity-matched feed: feed[units/min] = move / dt * 60000ms
         uint32_t dt     = (_last_mpg_ms == 0) ? MPG_INTERVAL_MS : (now - _last_mpg_ms);
         int64_t  feed64 = (int64_t)move * 60000 / (int64_t)dt;
-        e4_t     f_max  = e4_from_int(inInches ? 24 : 600);
-        e4_t     f_min  = e4_from_int(inInches ? 2 : 60);
+        const bool c_only = only_c_axis_selected();
+        e4_t     f_max  = c_only ? C_DYNAMIC_MAX_FEED : e4_from_int(inInches ? 24 : 600);
+        e4_t     f_min  = c_only ? C_DYNAMIC_MIN_FEED : e4_from_int(inInches ? 2 : 60);
         e4_t     feed   = (feed64 > f_max) ? f_max : (feed64 < f_min ? f_min : (e4_t)feed64);
 
         uint32_t outstanding =
@@ -1103,6 +1188,11 @@ public:
         if (_mpg_accum == 0) {
             return;
         }
+        if (c_axis_motion_blocked()) {
+            _mpg_accum = 0;
+            request_lathe_status(true);
+            return;
+        }
         uint32_t now = millis();
         if ((now - _last_mpg_ms) >= MPG_INTERVAL_MS) {
             JogFlowControl flow = jog_flow_control();
@@ -1142,6 +1232,7 @@ public:
         if (!_dynamic_mode) {
             return false;
         }
+        if (c_axis_selected()) return true;
         if (_angle_armed) return _dist_index[_angle_reference_axis] >= num_digits();
         for (int axis = 0; axis < num_axes; axis++) {
             if (selected(axis) && _dist_index[axis] >= num_digits()) {
@@ -1166,6 +1257,10 @@ public:
     }
 
     void onPoll() override {
+        if (lathe_mode_active() && (uint32_t)(millis() - _last_lathe_status_ms) >= 1000) {
+            request_lathe_status();
+            _last_lathe_status_ms = millis();
+        }
         if (state == Disconnected) {
             if (_angle_armed) disarm_angle(false, "Link lost; disarmed");
             reset_jog_runtime();

@@ -45,6 +45,11 @@ bool spindle_stopped() {
     return lathe.effective_rpm <= 0.5f;
 }
 
+bool spindle_stopping() {
+    const LatheStatus& lathe = lathe_status();
+    return lathe.spindle_stopping || status_is(lathe.spindle_state, "STOPPING");
+}
+
 bool spindle_running_cw() {
     return status_is(lathe_status().spindle_state, "CLOCKWISE");
 }
@@ -501,6 +506,11 @@ class SpindleScene : public Scene {
         return std::max(10, (int)std::floor(reported > 0.0f ? reported : 500.0f));
     }
 
+    int min_rpm() const {
+        const float reported = lathe_status().spindle_minimum_rpm;
+        return std::max(1, (int)std::ceil(reported > 0.0f ? reported : 50.0f));
+    }
+
 public:
     SpindleScene() : Scene("Spindle") {}
 
@@ -518,11 +528,11 @@ public:
             getPref("CW", &cw);
             _cw = cw != 0;
         }
-        _target_rpm = std::max(0, std::min(_target_rpm, max_rpm()));
+        _target_rpm = std::max(min_rpm(), std::min(_target_rpm, max_rpm()));
     }
 
     void onEncoder(int delta) override {
-        _target_rpm = std::max(0, std::min(max_rpm(), _target_rpm + delta * 10));
+        _target_rpm = std::max(min_rpm(), std::min(max_rpm(), _target_rpm + delta * 10));
         setPref("StepperRPMV2", _target_rpm);
         reDisplay();
     }
@@ -540,8 +550,13 @@ public:
     }
 
     void onGreenButtonPress() override {
-        if (!manual_link_ready() || state != Idle || _target_rpm <= 0) {
+        if (!manual_link_ready() || state != Idle || _target_rpm < min_rpm()) {
             _message = "Controller/RPM not ready";
+            reDisplay();
+            return;
+        }
+        if (spindle_stopping()) {
+            _message = "Wait for spindle to stop";
             reDisplay();
             return;
         }
@@ -554,7 +569,7 @@ public:
         _confirm_rpm = _target_rpm;
         _confirm_cw  = _cw;
         char msg[64];
-        snprintf(msg, sizeof(msg), "Start %s at %d RPM?\nRed remains immediate STOP", _cw ? "CW" : "CCW", _target_rpm);
+        snprintf(msg, sizeof(msg), "Start %s at %d RPM?\nRed commands controlled STOP", _cw ? "CW" : "CCW", _target_rpm);
         _message = msg;
         _confirming = true;
         push_scene(&confirmScene, (void*)_message.c_str());
@@ -562,14 +577,20 @@ public:
 
     void onRedButtonPress() override {
         send_line("M5");
-        _message = "STOP sent";
+        _message = "STOPPING gently";
         lathe_schedule_status_refresh(true);
         reDisplay();
     }
 
     void onDialButtonPress() override { pop_scene(); }
 
-    void onPoll() override { poll_lathe_status(_last_status_ms); }
+    void onPoll() override {
+        poll_lathe_status(_last_status_ms);
+        if (_message == "STOPPING gently" && spindle_stopped()) {
+            _message = "Stopped";
+            request_redisplay();
+        }
+    }
     void onStateChange(state_t old_state) override { (void)old_state; request_redisplay(); }
 
     void onError(const char* errstr) override {
@@ -586,7 +607,8 @@ public:
         centered_text(_cw ? "CW selected" : "CCW selected", 88, CYAN, SMALL);
 
         const LatheStatus& lathe = lathe_status();
-        const char* actual = lathe.spindle_state.empty() ? "State unknown" : lathe.spindle_state.c_str();
+        const char* actual = spindle_stopping() ? "STOPPING" :
+                             (lathe.spindle_state.empty() ? "State unknown" : lathe.spindle_state.c_str());
         centered_text(actual, 120, spindle_stopped() ? LIGHTGREY : GREEN, SMALL);
         char measured[48];
         if (lathe.feedback_rpm_known) snprintf(measured, sizeof(measured), "Measured %.1f / Cmd %.1f", lathe.feedback_rpm, lathe.spindle_commanded_rpm);
@@ -597,7 +619,7 @@ public:
                  lathe.shared_chuck_mode.empty() ? "mode unknown" : lathe.shared_chuck_mode.c_str());
         centered_text(ownership, 169, YELLOW, TINY);
         if (!_message.empty()) centered_text(_message.c_str(), 194, ORANGE, TINY);
-        drawButtonLegends("STOP", spindle_stopped() ? "Start" : "Apply", "Back");
+        drawButtonLegends("STOP", spindle_stopped() ? "Start" : (spindle_stopping() ? "Wait" : "Apply"), "Back");
         refreshDisplay();
     }
 } spindleScene;
@@ -607,13 +629,13 @@ constexpr int SpindleScene::Presets[5];
 StringConfigItem c_axis_max_rate("$/axes/c/max_rate_mm_per_min");
 
 class CPositionScene : public Scene {
-    int         _preset_index   = 2;
+    int         _preset_index   = 1;
     bool        _armed          = false;
     bool        _confirming     = false;
     float       _residual_deg   = 0.0f;
     uint32_t    _last_status_ms = 0;
     std::string _message;
-    static constexpr float Presets[5] = { 1.0f, 5.0f, 15.0f, 45.0f, 90.0f };
+    static constexpr float Presets[4] = { 0.225f, 2.25f, 22.5f, 90.0f };
 
     float quantum_deg() const {
         const int steps = lathe_status().spindle_steps_rev;
@@ -621,12 +643,11 @@ class CPositionScene : public Scene {
     }
 
     float positioning_feed(float degrees) const {
-        const float configured = c_axis_max_rate.known() ? strtof(c_axis_max_rate.get().c_str(), nullptr) : 2000.0f;
-        const float maximum    = configured > 0.0f ? configured : 2000.0f;
-        // Match the proven normal precise-jog behavior: target roughly 100 ms
-        // for a small detent, while respecting the configured C positioning
-        // ceiling. The planner remains responsible for acceleration.
-        return std::min(maximum, std::max(1.0f, std::fabs(degrees) * 600.0f));
+        const float configured = c_axis_max_rate.known() ? strtof(c_axis_max_rate.get().c_str(), nullptr) : 180000.0f;
+        const float maximum    = configured > 0.0f ? configured : 180000.0f;
+        // Rotary C detents target 50 ms while the planner remains responsible
+        // for the configured 1500 RPM/s acceleration limit.
+        return std::min(maximum, std::max(1.0f, std::fabs(degrees) * 1200.0f));
     }
 
     bool ready(std::string& reason) const {
@@ -695,7 +716,7 @@ public:
         if (_armed) {
             disarm(true);
         } else {
-            _preset_index = (_preset_index + 1) % 5;
+            _preset_index = (_preset_index + 1) % 4;
             _message.clear();
         }
         reDisplay();
@@ -710,7 +731,7 @@ public:
             return;
         }
         char msg[80];
-        snprintf(msg, sizeof(msg), "Arm C positioning?\nDial step %.1f deg", Presets[_preset_index]);
+        snprintf(msg, sizeof(msg), "Arm C positioning?\nDial step %.3f deg", Presets[_preset_index]);
         _message = msg;
         _confirming = true;
         push_scene(&confirmScene, (void*)_message.c_str());
@@ -743,7 +764,7 @@ public:
         background();
         drawMenuTitle("C Position");
         char step[36], quantum[42], ownership[52];
-        snprintf(step, sizeof(step), "%.1f deg/detent", Presets[_preset_index]);
+        snprintf(step, sizeof(step), "%.3f deg/detent", Presets[_preset_index]);
         snprintf(quantum, sizeof(quantum), "Microstep %.3f deg", quantum_deg());
         snprintf(ownership, sizeof(ownership), "%s  %s", _armed ? "ARMED" : "Disarmed",
                  lathe_status().shared_chuck_mode.empty() ? "mode unknown" : lathe_status().shared_chuck_mode.c_str());
@@ -758,7 +779,7 @@ public:
     }
 } cPositionScene;
 
-constexpr float CPositionScene::Presets[5];
+constexpr float CPositionScene::Presets[4];
 
 class ThreadProofScene : public JogSequenceScene {
     int         _selection       = 0;

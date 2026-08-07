@@ -761,15 +761,33 @@ def assert_maijker_build_contract() -> None:
     )[0]
     assert "delay(" not in retry
 
-    # The M5 commissioning profile is intentionally gentle for the small lathe.
+    # X/Z retain the gentle linear profile while C uses exact 1/8-step rotary
+    # increments and degree-per-minute feed ceilings.
     assert "static const int DEFAULT_DIST_INDEX = 1;" in jog
-    assert 'getPref("GentleJogV1", &gentle_jog_profile)' in jog
-    assert 'setPref("GentleJogV1", 1)' in jog
+    assert 'getPref("GentleJogV2", &gentle_jog_profile)' in jog
+    assert 'setPref("GentleJogV2", 1)' in jog
     assert "e4_from_int(inInches ? 24 : 600)" in jog
     assert "e4_from_int(inInches ? 2 : 60)" in jog
     assert "static const uint32_t PRECISE_MOVE_MS = 100;" in jog
+    assert "static const uint32_t PRECISE_C_MOVE_MS = 50;" in jog
+    assert "C_DYNAMIC_MIN_FEED = 180000000" in jog
+    assert "C_DYNAMIC_MAX_FEED = 900000000" in jog
+    assert "case 0: return 2250;" in jog
+    assert "case 1: return 22500;" in jog
+    assert "case 2: return 225000;" in jog
+    assert "default: return 900000;" in jog
+    assert 'cmd += c_only ? "G21"' in jog
+    assert "c_axis_motion_blocked()" in jog
     assert "e4_t precise_jog_feed(e4_t move)" in jog
     assert "e4_t     feed = precise_jog_feed(move);" in jog
+
+    assert "spindle_minimum_rpm" in manual
+    assert 'send_line("M5");' in manual
+    assert '"STOPPING gently"' in manual
+    assert "static constexpr float Presets[4] = { 0.225f, 2.25f, 22.5f, 90.0f };" in manual
+    assert "int         _preset_index   = 1;" in manual
+    assert ": 180000.0f;" in manual
+    assert "std::fabs(degrees) * 1200.0f" in manual
 
     # Jog angle selection is full-circle and never persists its armed state.
     # X or Z remains the counting reference while all armed motion is emitted

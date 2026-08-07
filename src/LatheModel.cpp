@@ -410,8 +410,20 @@ void lathe_set_status_value(const char* id, const char* value) {
         s_pending_status.spindle_commanded_rpm = parse_float(value);
     } else if (strcmp(id, "Spindle open-loop RPM") == 0) {
         s_pending_status.spindle_open_loop_rpm = parse_float(value);
+    } else if (strcmp(id, "Spindle minimum RPM") == 0) {
+        s_pending_status.spindle_minimum_rpm = parse_float(value);
     } else if (strcmp(id, "Spindle maximum RPM") == 0) {
         s_pending_status.spindle_maximum_rpm = parse_float(value);
+    } else if (strcmp(id, "Spindle acceleration RPM/s") == 0) {
+        s_pending_status.spindle_acceleration_rpm_per_sec = parse_float(value);
+    } else if (strcmp(id, "Spindle deceleration RPM/s") == 0) {
+        s_pending_status.spindle_deceleration_rpm_per_sec = parse_float(value);
+    } else if (strcmp(id, "Spindle stopping") == 0) {
+        s_pending_status.spindle_stopping = parse_bool(value);
+    } else if (strcmp(id, "Spindle stop remaining ms") == 0) {
+        s_pending_status.spindle_stop_remaining_ms = static_cast<uint32_t>(parse_int(value));
+    } else if (strcmp(id, "Spindle stop timeouts") == 0) {
+        s_pending_status.spindle_stop_timeouts = static_cast<uint32_t>(parse_int(value));
     } else if (strcmp(id, "Spindle steps/rev") == 0) {
         s_pending_status.spindle_steps_rev = parse_int(value);
     } else if (strcmp(id, "C position dead reckoned") == 0) {

@@ -16,7 +16,13 @@ struct LatheStatus {
     std::string spindle_drive;
     float       spindle_commanded_rpm = 0.0f;
     float       spindle_open_loop_rpm = 0.0f;
+    float       spindle_minimum_rpm   = 0.0f;
     float       spindle_maximum_rpm   = 0.0f;
+    float       spindle_acceleration_rpm_per_sec = 0.0f;
+    float       spindle_deceleration_rpm_per_sec = 0.0f;
+    bool        spindle_stopping      = false;
+    uint32_t    spindle_stop_remaining_ms = 0;
+    uint32_t    spindle_stop_timeouts = 0;
     int         spindle_steps_rev     = 0;
     bool        c_position_dead_reckoned = false;
     int         i2s_fifo_threshold    = 0;

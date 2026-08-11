@@ -192,9 +192,13 @@ class SecureOtaSourceContractTests(unittest.TestCase):
         self.assertIn("secure_ota_confirm_pairing_physical()", self.pairing_scene)
         self.assertIn("Press center dial to pair", self.pairing_scene)
 
-    def test_legacy_upload_is_disabled_after_secure_pairing(self) -> None:
+    def test_legacy_upload_remains_available_for_direct_recovery(self) -> None:
         self.assertIn("secure_ota_legacy_upload_allowed", self.wifi)
-        self.assertIn("paired && TamsFirmware::trustConfigured()", self.service)
+        legacy_policy = self.service.split("bool secure_ota_legacy_upload_allowed()", 1)[1].split(
+            "void secure_ota_confirm_pairing_physical", 1
+        )[0]
+        self.assertIn("unrestricted LAN recovery path", legacy_policy)
+        self.assertIn("return true;", legacy_policy)
 
     def test_authenticated_responses_are_bound_to_nonce_counter_status_and_body(self) -> None:
         self.assertIn('"X-TAMS-Response-Auth"', self.service)

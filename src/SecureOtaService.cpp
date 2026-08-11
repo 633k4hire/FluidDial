@@ -99,6 +99,7 @@ namespace {
     bool bootPendingVerify = false;
     bool applicationHealthy = false;
     uint32_t bootStartedAt = 0;
+    uint32_t otaRebootAt = 0;
     char statusText[96] = "initializing";
 
     void setStatus(const char* text) {
@@ -709,8 +710,11 @@ namespace {
         String body = server->arg("plain");
         const bool hexEncoded = server->header("X-TAMS-Chunk-Encoding") == "hex";
         const size_t bodyLimit = hexEncoded ? MaxChunkBytes * 2 : MaxChunkBytes;
-        if (!body.length() || body.length() > bodyLimit || !bodyHashMatches(body) ||
-            !authenticate("PUT", "/api/v1/ota/chunk", false)) return sendError(401, "chunk authorization failed");
+        if (!body.length() || body.length() > bodyLimit) return sendError(400, "chunk body length is invalid");
+        if (!bodyHashMatches(body)) return sendError(401, "chunk body hash mismatch");
+        if (!authenticate("PUT", "/api/v1/ota/chunk", false)) {
+            return sendError(401, "chunk request authentication failed");
+        }
         if (!ota.active || server->arg("deployment_id") != ota.deploymentId ||
             server->header("X-TAMS-Manifest") != ota.manifestDigest.c_str()) {
             return sendError(409, "deployment is not active or manifest binding changed");
@@ -769,9 +773,10 @@ namespace {
         preferences.end();
         ota.active = false;
         setStatus("verified; rebooting");
+        // Queue the reboot after the HTTP handler returns so WebServer and the
+        // TCP stack can flush the authenticated commit response completely.
+        otaRebootAt = millis() + 1500;
         sendJson(200, "{\"status\":\"verified_rebooting\"}");
-        delay(250);
-        ESP.restart();
     }
     void handleAbort() {
         String body = server->arg("plain");
@@ -901,6 +906,11 @@ void secure_ota_poll() {
         inspectBootState();
     }
     if (ota.active && static_cast<uint32_t>(millis() - ota.lastActivity) > SessionTimeoutMs) abortOta("deployment timed out");
+    if (otaRebootAt && static_cast<int32_t>(millis() - otaRebootAt) >= 0) {
+        otaRebootAt = 0;
+        ESP.restart();
+        return;
+    }
     if (challengeLive && static_cast<int32_t>(challengeExpires - millis()) <= 0) challengeLive = false;
     if (physicalWindowUntil && !physicalWindowOpen()) {
         physicalWindowUntil = 0;

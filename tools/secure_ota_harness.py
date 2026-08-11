@@ -208,6 +208,16 @@ class SecureOtaSourceContractTests(unittest.TestCase):
         self.assertIn('"X-TAMS-Chunk-Encoding"', self.service)
         self.assertIn('header("X-TAMS-Chunk-Encoding") == "hex"', self.service)
         self.assertIn("unhexVector(body, decoded.data()", self.service)
+        self.assertIn('"chunk body hash mismatch"', self.service)
+        self.assertIn('"chunk request authentication failed"', self.service)
+
+    def test_commit_response_flushes_before_reboot(self) -> None:
+        commit = self.service.split("void handleCommit()", 1)[1].split(
+            "void handleAbort()", 1
+        )[0]
+        self.assertIn("otaRebootAt = millis() + 1500", commit)
+        self.assertNotIn("delay(250)", commit)
+        self.assertNotIn("ESP.restart()", commit)
 
     def test_wifi_diagnostics_and_screen_capture_use_the_paired_contract(self) -> None:
         self.assertIn("/api/v1/diagnostics/link", self.service)

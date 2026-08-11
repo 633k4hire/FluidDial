@@ -23,6 +23,7 @@
 #include <array>
 #include <cstring>
 #include <string>
+#include <vector>
 
 extern const char* git_info;
 
@@ -632,15 +633,26 @@ namespace {
             return sendError(401, "OTA authorization failed");
         }
         if (ota.active) return sendError(409, "another deployment is active");
-        uint8_t manifest[TamsFirmware::MaxManifestBytes];
-        uint8_t signature[TamsFirmware::MaxSignatureBytes];
-        size_t manifestLength = 0, signatureLength = 0;
-        if (deploymentId.length() < 8 || deploymentId.length() >= sizeof(ota.deploymentId) ||
-            !unhexVector(manifestHex, manifest, sizeof(manifest), manifestLength) ||
-            !unhexVector(signatureHex, signature, sizeof(signature), signatureLength)) {
+        const size_t manifestCapacity = manifestHex.length() / 2;
+        const size_t signatureCapacity = signatureHex.length() / 2;
+        if (!manifestCapacity || (manifestHex.length() & 1U) ||
+            manifestCapacity > TamsFirmware::MaxManifestBytes || !signatureCapacity ||
+            (signatureHex.length() & 1U) || signatureCapacity > TamsFirmware::MaxSignatureBytes) {
             return sendError(400, "invalid signed manifest envelope");
         }
-        auto validation = TamsFirmware::validateSignedManifest(manifest, manifestLength, signature, signatureLength);
+        // The synchronous WebServer handler runs on the Arduino loop task.
+        // Keeping the protocol-sized 4 KiB manifest scratch buffer on that
+        // task's stack can overflow it before the first OTA chunk arrives.
+        std::vector<uint8_t> manifest(manifestCapacity);
+        std::vector<uint8_t> signature(signatureCapacity);
+        size_t manifestLength = 0, signatureLength = 0;
+        if (deploymentId.length() < 8 || deploymentId.length() >= sizeof(ota.deploymentId) ||
+            !unhexVector(manifestHex, manifest.data(), manifest.size(), manifestLength) ||
+            !unhexVector(signatureHex, signature.data(), signature.size(), signatureLength)) {
+            return sendError(400, "invalid signed manifest envelope");
+        }
+        auto validation = TamsFirmware::validateSignedManifest(
+            manifest.data(), manifestLength, signature.data(), signatureLength);
         std::string compatibilityError;
         bool recoveryDowngrade = validation.manifestValid && validation.signatureValid &&
                                  validation.manifest.recovery && validation.manifest.allowDowngrade &&

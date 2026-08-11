@@ -707,21 +707,36 @@ namespace {
     }
     void handleChunk() {
         String body = server->arg("plain");
-        if (body.length() > MaxChunkBytes || !bodyHashMatches(body) ||
+        const bool hexEncoded = server->header("X-TAMS-Chunk-Encoding") == "hex";
+        const size_t bodyLimit = hexEncoded ? MaxChunkBytes * 2 : MaxChunkBytes;
+        if (!body.length() || body.length() > bodyLimit || !bodyHashMatches(body) ||
             !authenticate("PUT", "/api/v1/ota/chunk", false)) return sendError(401, "chunk authorization failed");
         if (!ota.active || server->arg("deployment_id") != ota.deploymentId ||
             server->header("X-TAMS-Manifest") != ota.manifestDigest.c_str()) {
             return sendError(409, "deployment is not active or manifest binding changed");
         }
+        std::vector<uint8_t> decoded;
+        const uint8_t* chunk = reinterpret_cast<const uint8_t*>(body.c_str());
+        size_t chunkLength = body.length();
+        if (hexEncoded) {
+            if (body.length() & 1U) return sendError(400, "hex chunk length is invalid");
+            decoded.resize(body.length() / 2);
+            size_t decodedLength = 0;
+            if (!unhexVector(body, decoded.data(), decoded.size(), decodedLength) ||
+                !decodedLength || decodedLength > MaxChunkBytes) {
+                return sendError(400, "hex chunk encoding is invalid");
+            }
+            chunk = decoded.data();
+            chunkLength = decodedLength;
+        }
         uint32_t offset = strtoul(server->arg("offset").c_str(), nullptr, 10);
-        if (offset != ota.writtenBytes || ota.writtenBytes + body.length() > ota.expectedBytes) return sendError(409, "chunk offset or size is invalid");
-        auto* chunk = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(body.c_str()));
-        if (Update.write(chunk, body.length()) != body.length()) {
+        if (offset != ota.writtenBytes || ota.writtenBytes + chunkLength > ota.expectedBytes) return sendError(409, "chunk offset or size is invalid");
+        if (Update.write(const_cast<uint8_t*>(chunk), chunkLength) != chunkLength) {
             abortOta("OTA partition write failed");
             return sendError(500, "OTA partition write failed");
         }
-        mbedtls_sha256_update_ret(&ota.imageHash, reinterpret_cast<const uint8_t*>(body.c_str()), body.length());
-        ota.writtenBytes += body.length();
+        mbedtls_sha256_update_ret(&ota.imageHash, chunk, chunkLength);
+        ota.writtenBytes += chunkLength;
         ota.lastActivity = millis();
         sendJson(200, "{\"accepted_offset\":" + std::to_string(ota.writtenBytes) + "}");
     }
@@ -803,8 +818,8 @@ namespace {
     void registerRoutes() {
         if (routesRegistered || !server) return;
         static const char* headers[] = { "X-TAMS-Target", "X-TAMS-Nonce", "X-TAMS-Counter", "X-TAMS-Manifest",
-                                         "X-TAMS-Body-SHA256", "X-TAMS-Auth", "X-TAMS-Client-Nonce",
-                                         "X-TAMS-Challenge-Auth", "Content-Length" };
+                                          "X-TAMS-Body-SHA256", "X-TAMS-Auth", "X-TAMS-Client-Nonce",
+                                         "X-TAMS-Challenge-Auth", "X-TAMS-Chunk-Encoding", "Content-Length" };
         server->collectHeaders(headers, sizeof(headers) / sizeof(headers[0]));
         server->on("/api/v1/device", HTTP_GET, handleDevice);
         server->on("/api/v1/pair/start", HTTP_POST, handlePairStart);

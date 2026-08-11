@@ -204,6 +204,11 @@ class SecureOtaSourceContractTests(unittest.TestCase):
         self.assertIn('"X-TAMS-Response-Auth"', self.service)
         self.assertIn('"response\\n"', self.service)
 
+    def test_relayed_image_chunks_use_binary_safe_hex_transport(self) -> None:
+        self.assertIn('"X-TAMS-Chunk-Encoding"', self.service)
+        self.assertIn('header("X-TAMS-Chunk-Encoding") == "hex"', self.service)
+        self.assertIn("unhexVector(body, decoded.data()", self.service)
+
     def test_wifi_diagnostics_and_screen_capture_use_the_paired_contract(self) -> None:
         self.assertIn("/api/v1/diagnostics/link", self.service)
         self.assertIn("/api/v1/diagnostics/screen.bmp", self.service)

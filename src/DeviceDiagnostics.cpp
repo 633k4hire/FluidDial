@@ -84,7 +84,8 @@ std::string device_diagnostics_json() {
         ",\"transport\":{\"kind\":\"uart\",\"baud\":1000000,\"rx_bytes\":" +
         std::to_string(transport.rx_bytes) + ",\"tx_bytes\":" +
         std::to_string(transport.tx_bytes) + ",\"rx_high_water\":" +
-        std::to_string(transport.rx_high_water) + ",\"rx_capacity\":4096,\"driver_initializations\":" +
+        std::to_string(transport.rx_high_water) + ",\"rx_capacity\":" +
+        std::to_string(FNC_UART_RX_CAPACITY) + ",\"driver_initializations\":" +
         std::to_string(transport.reinitializations) + ",\"last_rx_ms\":" +
         std::to_string(transport.last_rx_ms) + ",\"last_tx_ms\":" +
         std::to_string(transport.last_tx_ms) + "},\"watchdog\":{\"last_rx_ms\":" +

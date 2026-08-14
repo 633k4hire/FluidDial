@@ -8,6 +8,10 @@
 
 // minimum refresh rate in milliseconds - moved here for access in all builds
 constexpr static const int UPDATE_RATE_MS = 30;
+// The current ESP421 lathe document is larger than 4 KiB.  Keep one complete
+// reply plus UART scheduling headroom so the streaming parser never starts
+// from a hardware-overflowed byte stream.
+constexpr static const int FNC_UART_RX_CAPACITY = 8192;
 
 #ifdef ARDUINO
 #    include <Arduino.h>

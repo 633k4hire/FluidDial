@@ -583,6 +583,7 @@ def assert_maijker_build_contract() -> None:
     platformio = (root / "platformio.ini").read_text(encoding="utf-8")
     hardware = (root / "src" / "HardwareM5Dial.hpp").read_text(encoding="utf-8")
     system = (root / "src" / "SystemArduino.cpp").read_text(encoding="utf-8")
+    system_header = (root / "src" / "System.h").read_text(encoding="utf-8")
     main = (root / "src" / "ardmain.cpp").read_text(encoding="utf-8")
     jog = (root / "src" / "MultiJogScene.cpp").read_text(encoding="utf-8")
     fluidnc = (root / "src" / "FluidNCModel.cpp").read_text(encoding="utf-8")
@@ -680,7 +681,8 @@ def assert_maijker_build_contract() -> None:
     # The 1 Mbps link must absorb a complete multi-line ESP421 response without
     # entering FluidNC's synchronous XON/XOFF path.  A controller reset must
     # invalidate both representations of state so the first report reconnects.
-    assert "uart_driver_install(fnc_uart_port, 4096" in system
+    assert "FNC_UART_RX_CAPACITY = 8192" in system_header
+    assert "uart_driver_install(fnc_uart_port, FNC_UART_RX_CAPACITY" in system
     assert "uart_set_sw_flow_ctrl(fnc_uart_port, false, 0, 0)" in system
     assert "fnc_putchar(0x11)" not in fluidnc
     rst_handler = file_parser.split('if (strcmp(command, "RST") == 0)', 1)[1].split(
@@ -690,7 +692,7 @@ def assert_maijker_build_contract() -> None:
     assert "state = Disconnected;" not in rst_handler
     assert "flush_fnc_rx(50);" in main
     assert 'send_line("$RI=1000", 500);' in main
-    assert "for (int i = 0; i < 4096; i++)" in main
+    assert "for (int i = 0; i < FNC_UART_RX_CAPACITY; i++)" in main
     assert "lathe_poll_status();" in main
     assert 'send_line("$RI=0");' in fluidnc
     assert "FastState replaces periodic verbose status" in fluidnc

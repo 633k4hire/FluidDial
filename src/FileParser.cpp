@@ -521,6 +521,13 @@ private:
     int         _level = 0;
 
 public:
+    void resetDocument() {
+        _key.clear();
+        _id.clear();
+        _value.clear();
+        _level = 0;
+    }
+
     void whitespace(char c) override {}
     void startDocument() override {}
     void startArray() override {}
@@ -555,6 +562,7 @@ public:
 
     void endArray() override {
         lathe_finish_status_update(true);
+        resetDocument();
         parser.setListener(pInitialListener);
     }
 
@@ -665,6 +673,11 @@ public:
         if (_key == DATA && _cmd == "421") {
             _lathe_data_started = true;
             _key                = NONE;
+            // The controller can reboot or enter OTA maintenance while an
+            // ESP421 document is in flight.  Reset the listener's nesting
+            // state before every replacement document so a truncated reply
+            // cannot make all later status objects appear permanently nested.
+            latheStatusListener.resetDocument();
             lathe_begin_status_update();
             parser.setListener(&latheStatusListener);
         }

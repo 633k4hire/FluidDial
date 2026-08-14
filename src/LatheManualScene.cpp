@@ -83,7 +83,10 @@ void draw_value_row(int y, const char* label, const char* value, bool selected, 
 
 void poll_lathe_status(uint32_t& last_request_ms) {
     const uint32_t now = millis();
-    if ((uint32_t)(now - last_request_ms) >= 1000) {
+    // FastState supplies live DRO/spindle/safety data. ESP421 is now a
+    // connect/change/explicit-diagnostics document, with this poll retained
+    // only as compatibility fallback for older controller firmware.
+    if (!fast_state_received() && (uint32_t)(now - last_request_ms) >= 1000) {
         request_lathe_status();
         last_request_ms = now;
     }
@@ -286,6 +289,8 @@ class AngleJogScene : public Scene {
     bool     _armed             = false;
     bool     _confirming_arm    = false;
     bool     _continuous        = false;
+    bool     _continuous_positive = true;
+    uint32_t _last_continuous_chunk_ms = 0;
     bool     _armed_diameter    = true;
     double   _ideal_path_mm     = 0.0;
     double   _sent_x_mm         = 0.0;
@@ -318,6 +323,7 @@ class AngleJogScene : public Scene {
     void disarm(const char* reason = nullptr) {
         if (_continuous || state == Jog) send_jog_cancel();
         _continuous = false;
+        _last_continuous_chunk_ms = 0;
         _armed      = false;
         reset_residuals();
         if (reason) _confirm_message = reason;
@@ -342,18 +348,29 @@ class AngleJogScene : public Scene {
         send_jog_line(jog_command(feed, dx, dz).c_str());
     }
 
-    void start_continuous(bool positive) {
-        if (!_armed || state != Idle) return;
-        const float path = positive ? 5000.0f : -5000.0f;
+    void send_continuous_chunk() {
+        if (!_continuous || !_armed || state != Idle || !fast_state_fresh()) return;
+        const uint32_t now = millis();
+        if (_last_continuous_chunk_ms != 0 &&
+            static_cast<uint32_t>(now - _last_continuous_chunk_ms) < 75) return;
+        const float path = _continuous_positive ? 0.5f : -0.5f;
         LatheVectorMove move = lathe_angle_vector(path, (float)_angle, _positive_slope, _armed_diameter);
         send_jog_line(jog_command(300.0f, move.x_command_mm, move.z_mm).c_str());
+        _last_continuous_chunk_ms = now;
+    }
+
+    void start_continuous(bool positive) {
+        if (!_armed || state != Idle || !fast_state_fresh()) return;
         _continuous = true;
+        _continuous_positive = positive;
+        send_continuous_chunk();
     }
 
     void stop_continuous() {
         if (!_continuous) return;
         send_jog_cancel();
         _continuous = false;
+        _last_continuous_chunk_ms = 0;
         reset_residuals();
         request_redisplay();
     }
@@ -451,6 +468,8 @@ public:
         poll_lathe_status(_last_status_ms);
         if (_armed && (!manual_link_ready() || lathe_status().diameter_mode != _armed_diameter)) {
             disarm("Status changed; re-arm");
+        } else if (_continuous && state == Idle) {
+            send_continuous_chunk();
         }
     }
 

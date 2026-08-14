@@ -62,6 +62,23 @@ struct FluidNcLinkDiagnostics {
     uint8_t  consecutive_timeouts   = 0;
 };
 
+struct FastStateDiagnostics {
+    uint32_t valid_frames       = 0;
+    uint32_t crc_errors         = 0;
+    uint32_t schema_errors      = 0;
+    uint32_t skipped_frames     = 0;
+    uint32_t stale_transitions  = 0;
+    uint32_t last_sequence      = 0;
+    uint32_t controller_time_ms = 0;
+    uint32_t last_valid_ms      = 0;
+    uint32_t latest_jog_id      = 0;
+    uint32_t latest_jog_error   = 0;
+    uint32_t lease_sequence     = 0;
+    bool     latest_jog_accepted = false;
+    bool     lease_accepted      = false;
+    bool     stale               = true;
+};
+
 int num_digits();
 
 void send_line(const char* s, int timeout = 2000);
@@ -87,6 +104,12 @@ void set_disconnected_state();
 
 void update_rx_time();
 const FluidNcLinkDiagnostics& fluidnc_link_diagnostics();
+const FastStateDiagnostics& fast_state_diagnostics();
+bool fast_state_received();
+bool fast_state_fresh();
+bool fast_state_should_renew_lease();
+void fast_state_poll();
+void fast_state_note_transport_reset();
 
 // Bounded boot-time probe over UART: discards bootloader noise then sends
 // XON + status-report queries until FluidNC responds, or `budget_ms`

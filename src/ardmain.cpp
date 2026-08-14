@@ -196,10 +196,12 @@ void loop() {
     if (wifi_use_uart_mode()) {
         static bool last_uart_connected = false;
         static uint32_t next_uart_pairing_at = 0;
+        static uint32_t next_uart_lease_at = 0;
         const bool uart_connected = fnc_is_connected();
         if (uart_connected && !last_uart_connected) {
             secure_ota_note_uart_link_reset();
             next_uart_pairing_at = 0;
+            next_uart_lease_at = 0;
         }
         last_uart_connected = uart_connected;
         if (uart_connected &&
@@ -209,6 +211,17 @@ void loop() {
                 send_line(command, 750);
             }
             next_uart_pairing_at = millis() + 3000U;
+        }
+        if (uart_connected && fast_state_should_renew_lease() &&
+            static_cast<int32_t>(millis() - next_uart_lease_at) >= 0) {
+            char command[192];
+            uint32_t lease_sequence = 0;
+            if (secure_ota_uart_lease_request(command, sizeof(command), lease_sequence)) {
+                // A lease reply is tiny at 1 Mbaud. Keep the wait bounded so
+                // physical STOP/release input remains responsive on link loss.
+                send_line(command, 100);
+            }
+            next_uart_lease_at = millis() + 250U;
         }
     }
 #endif
@@ -226,6 +239,7 @@ void loop() {
             break;
         }
     }
+    fast_state_poll();
     lathe_poll_status();
     dispatch_events();  // Handle dial, touch, buttons
     service_redisplay();

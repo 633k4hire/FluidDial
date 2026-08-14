@@ -214,6 +214,8 @@ private:
     bool         _cancelling    = false;
     bool         _cancel_held   = false;
     bool         _continuous    = false;
+    bool         _continuous_negative = false;
+    uint32_t     _last_continuous_chunk_ms = 0;
     // Jog behavior: 1 = Dynamic (paced, handwheel-follow), 0 = Precise (exact
     // clicks x step size). Persists in NVS
     int          _dynamic_mode  = 1;
@@ -390,6 +392,7 @@ private:
 
     void reset_jog_runtime() {
         _continuous       = false;
+        _last_continuous_chunk_ms = 0;
         _mpg_jogging      = false;
         _mpg_accum        = 0;
         _last_mpg_ms      = 0;
@@ -1023,7 +1026,11 @@ public:
             request_lathe_status(true);
             return;
         }
-        // e.g. $J=G91F1000X-10000
+        if (!fast_state_fresh()) return;
+        const uint32_t now = millis();
+        if (_last_continuous_chunk_ms != 0 &&
+            static_cast<uint32_t>(now - _last_continuous_chunk_ms) < 75) return;
+        // Button-hold motion uses independently bounded, renewable chunks.
         e4_t total_distance = _angle_armed ? static_cast<e4_t>(std::llround(angle_path_per_count())) : 0;
         int  n_axes         = 0;
         if (!_angle_armed) {
@@ -1045,7 +1052,9 @@ public:
         cmd += "F";
         cmd += e4_to_cstr(_angle_armed ? angle_command_feed(feedrate) : feedrate, 3);
         if (_angle_armed) {
-            e4_t path = e4_from_int(inInches ? 200 : 5000);
+            // Keep every renewable linear chunk below FluidNC's 5 mm
+            // per-command safety bound in either display unit mode.
+            e4_t path = inInches ? e4_from_int(1) / 10 : e4_from_int(1);
             if (negative) path = -path;
             e4_t x_command = 0;
             e4_t z_move    = 0;
@@ -1057,22 +1066,26 @@ public:
                 if (selected(axis)) {
                     e4_t axis_distance;
                     if (rotary_c_axis(axis)) {
-                        axis_distance = e4_from_int(5000);
+                        axis_distance = e4_from_int(45);
                     } else if (n_axes == 1) {
-                        axis_distance = e4_from_int(inInches ? 200 : 5000);
+                        axis_distance = inInches ? e4_from_int(1) / 10 : e4_from_int(1);
                     } else {
-                        axis_distance = distance(axis) * 20;
+                        axis_distance = inInches ? e4_from_int(1) / 10 : e4_from_int(1);
                     }
                     if (negative) {
                         axis_distance = -axis_distance;
                     }
                     cmd += profile_axis_char(axis);
-                    cmd += e4_to_cstr(axis_distance, 0);
+                    cmd += e4_to_cstr(
+                        axis_distance,
+                        rotary_c_axis(axis) ? 4 : (inInches ? 3 : 2));
                 }
             }
         }
         send_jog_line(cmd.c_str());
         _continuous = true;
+        _continuous_negative = negative;
+        _last_continuous_chunk_ms = now;
     }
 
     void onGreenButtonPress() {
@@ -1257,7 +1270,8 @@ public:
     }
 
     void onPoll() override {
-        if (lathe_mode_active() && (uint32_t)(millis() - _last_lathe_status_ms) >= 1000) {
+        if (lathe_mode_active() && !fast_state_received() &&
+            (uint32_t)(millis() - _last_lathe_status_ms) >= 1000) {
             request_lathe_status();
             _last_lathe_status_ms = millis();
         }
@@ -1267,6 +1281,9 @@ public:
             return;
         }
         angleSafetyCheck();
+        if (_continuous && state == Idle) {
+            start_button_jog(_continuous_negative);
+        }
         if (dynamic_jog_active()) {
             service_mpg();
             // Stop jogging once the dial has been still long enough

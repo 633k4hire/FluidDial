@@ -31,6 +31,7 @@ namespace {
     constexpr char Namespace[] = "tamsota";
     constexpr char PairLabel[] = "tams-fluiddial-http-pair-v1";
     constexpr char UartPairLabel[] = "tams-fluiddial-uart-pair-v1";
+    constexpr char UartLeaseLabel[] = "tams-fluiddial-uart-lease-v1";
     constexpr uint32_t ChallengeLifetimeMs = 30000;
     constexpr uint32_t SessionTimeoutMs = 45000;
     constexpr uint32_t PairingWindowMs = 120000;
@@ -71,6 +72,8 @@ namespace {
     std::string recoveryManifestDigest;
     char uartPairNonce[33] = {};
     bool uartPairAcknowledged = false;
+    uint32_t uartLeaseSession = 0;
+    uint32_t uartLeaseSequence = 0;
 
     uint8_t challenge[16] = {};
     char challengeHex[33] = {};
@@ -1049,6 +1052,45 @@ void secure_ota_note_uart_link_reset() {
     // it stable makes retries idempotent and prevents a transient link flap
     // from racing authenticated Wi-Fi requests against a newly derived secret.
     uartPairAcknowledged = false;
+    uartLeaseSession = esp_random();
+    if (uartLeaseSession == 0) uartLeaseSession = 1;
+    uartLeaseSequence = 0;
+}
+
+bool secure_ota_uart_lease_request(char* command, size_t capacity, uint32_t& sequence) {
+    sequence = 0;
+    if (!command || capacity == 0 || !identityReady || !paired ||
+        !uartPairAcknowledged || ota.active) {
+        return false;
+    }
+    if (uartLeaseSession == 0) {
+        uartLeaseSession = esp_random();
+        if (uartLeaseSession == 0) uartLeaseSession = 1;
+    }
+    ++uartLeaseSequence;
+    if (uartLeaseSequence == 0) ++uartLeaseSequence;
+    const std::string canonical =
+        std::string(UartLeaseLabel) + "\n" + deviceId + "\n" +
+        std::to_string(uartLeaseSession) + "\n" + std::to_string(uartLeaseSequence);
+    uint8_t proof[32];
+    hmac(pairSecret,
+         sizeof(pairSecret),
+         reinterpret_cast<const uint8_t*>(canonical.data()),
+         canonical.size(),
+         proof);
+    const std::string authentication = hex(proof, sizeof(proof));
+    secureZero(proof, sizeof(proof));
+    const int written = snprintf(
+        command,
+        capacity,
+        "[ESP429]D=%s S=%lu Q=%lu A=%s",
+        deviceId,
+        static_cast<unsigned long>(uartLeaseSession),
+        static_cast<unsigned long>(uartLeaseSequence),
+        authentication.c_str());
+    if (written <= 0 || static_cast<size_t>(written) >= capacity) return false;
+    sequence = uartLeaseSequence;
+    return true;
 }
 
 #endif

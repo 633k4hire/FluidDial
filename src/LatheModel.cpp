@@ -14,6 +14,7 @@
 #include <cctype>
 #include <cstring>
 #include <cstdlib>
+#include <climits>
 
 static LatheStatus        s_status;
 static LatheStatus        s_pending_status;
@@ -243,12 +244,42 @@ bool operator_navigation_available() {
 
 bool operator_machine_actions_available() {
     return s_operator_link_state == OperatorLinkState::Ready && s_status.available &&
-           s_status.enabled && !lathe_command_blocks_actions();
+           s_status.enabled && fast_state_fresh() && fast_state_diagnostics().lease_accepted &&
+           !lathe_command_blocks_actions();
 }
 
 bool operator_basic_motion_actions_available() {
     return state != Disconnected && s_operator_link_state != OperatorLinkState::Updating &&
+           fast_state_fresh() && fast_state_diagnostics().lease_accepted &&
            !lathe_command_blocks_actions();
+}
+
+void lathe_apply_fast_state(uint8_t spindleState,
+                            int32_t commandedRpmTenths,
+                            int32_t measuredRpmTenths,
+                            uint32_t encoderAgeMs,
+                            uint8_t owner,
+                            uint16_t flags) {
+    static const char* owners[] = { "UNAVAILABLE", "IDLE", "C_POSITIONING", "SPINDLE" };
+    switch (spindleState) {
+        case 3: s_status.spindle_state = "CW"; break;
+        case 4: s_status.spindle_state = "CCW"; break;
+        case 5: s_status.spindle_state = "DISABLED"; break;
+        default: s_status.spindle_state = "UNKNOWN"; break;
+    }
+    s_status.spindle_commanded_rpm = commandedRpmTenths / 10.0f;
+    s_status.feedback_rpm_known = measuredRpmTenths != INT32_MIN;
+    s_status.feedback_rpm = s_status.feedback_rpm_known ? measuredRpmTenths / 10.0f : 0.0f;
+    s_status.feedback_stale = (flags & (1U << 4)) != 0 || encoderAgeMs == UINT32_MAX;
+    s_status.feedback_fault = (flags & (1U << 5)) != 0;
+    s_status.feedback_index = (flags & (1U << 3)) != 0;
+    s_status.spindle_stopping = (flags & (1U << 6)) != 0;
+    s_status.shared_chuck_mode = owner < 4 ? owners[owner] : "UNAVAILABLE";
+    s_status.updated_ms = millis();
+    if ((flags & (1U << 1)) != 0 && s_status.available && s_status.enabled &&
+        !s_last_command.pending && !s_last_command.recoverable) {
+        s_operator_link_state = OperatorLinkState::Ready;
+    }
 }
 
 const LatheSyncDiagnostics& lathe_sync_diagnostics() {
@@ -309,6 +340,7 @@ void operator_note_transport_lost() {
 }
 
 void operator_note_transport_recovered() {
+    fast_state_note_transport_reset();
     json_reset_depth();
     s_status_reply_expected = false;
     s_last_status_request_ms = 0;

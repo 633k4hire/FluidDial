@@ -11,6 +11,7 @@
 #include "HomingScene.h"
 #include "BootLog.h"
 #include "LatheModel.h"
+#include "FastStateProtocol.h"
 
 #include <algorithm>
 
@@ -38,6 +39,8 @@ uint32_t           mySelectedTool     = 0;
 
 std::string myModes = "no data";
 static FluidNcLinkDiagnostics s_link_diagnostics;
+static FastStateDiagnostics s_fast_state_diagnostics;
+static bool s_fast_state_ever_received = false;
 
 int      lastAlarm = 0;
 int      lastError = 0;
@@ -195,6 +198,16 @@ void       jog_window_reset() { s_jog_window = 0; }
 
 // Stream network jogs without blocking
 void send_jog_line(const char* s) {
+#ifdef MAIJKER_XZACT_LATHE
+    static uint32_t s_jog_command_sequence = 0;
+    std::string identified = s ? s : "";
+    if (identified.rfind("$J=", 0) == 0 && identified.find('N', 3) == std::string::npos) {
+        ++s_jog_command_sequence;
+        if (s_jog_command_sequence == 0) ++s_jog_command_sequence;
+        identified.insert(3, "N" + std::to_string(s_jog_command_sequence));
+        s = identified.c_str();
+    }
+#endif
 #ifdef USE_WIFI
     if (!wifi_use_uart_mode()) {  // WiFi / Telnet / ESP-NOW: stream, no ack-gate
         for (const char* p = s; *p; ++p) {
@@ -280,7 +293,7 @@ static void connect_init() {
     fnc_realtime((realtime_cmd_t)0x0c);  // Ctrl-L - echo off (UART only)
 #endif
     send_line("$G");                     // Refresh GCode modes
-    send_line("$RI=1000");               // Keep reboot-time UART backlog bounded
+    send_line("$RI=0");                  // FastState replaces periodic verbose status on the wired pendant
     request_lathe_status(true);          // Auto-detect FluidNC lathe support
 
     // File and homing details are loaded when their scenes need them. Sending
@@ -312,6 +325,140 @@ extern "C" void show_state(const char* state_string) {
 }
 
 extern "C" void handle_other(char* line) {
+    if (line != nullptr && line[0] == '@' &&
+        (strncmp(line, "@F1,", 4) == 0 || strncmp(line, "@A1,", 4) == 0 || strncmp(line, "@L1,", 4) == 0)) {
+        const bool isFastState = strncmp(line, "@F1,", 4) == 0;
+        if (!FastStateProtocol::validateAndStrip(line)) {
+            ++s_fast_state_diagnostics.crc_errors;
+            return;
+        }
+
+        char* fields[21] = {};
+        size_t count = 0;
+        char* context = nullptr;
+        for (char* field = strtok_r(line, ",", &context);
+             field != nullptr && count < 21;
+             field = strtok_r(nullptr, ",", &context)) {
+            fields[count++] = field;
+        }
+        if (isFastState) {
+            if (count != 21) {
+                ++s_fast_state_diagnostics.schema_errors;
+                return;
+            }
+            int64_t values[20] = {};
+            for (size_t index = 1; index < 21; ++index) {
+                char* end = nullptr;
+                values[index - 1] = strtoll(fields[index], &end, 10);
+                if (end == fields[index] || *end != '\0') {
+                    ++s_fast_state_diagnostics.schema_errors;
+                    return;
+                }
+            }
+            const auto inRange = [](int64_t value, int64_t minimum, int64_t maximum) {
+                return value >= minimum && value <= maximum;
+            };
+            bool schemaValid =
+                inRange(values[0], 1, UINT32_MAX) &&
+                inRange(values[1], 0, UINT32_MAX) &&
+                inRange(values[8], 0, 12) &&
+                inRange(values[9], 0, 0x07) &&
+                inRange(values[10], 0, 0x07) &&
+                inRange(values[11], 0, 1) &&
+                inRange(values[12], 0, UINT32_MAX) &&
+                inRange(values[13], 0, 6) &&
+                inRange(values[14], 0, 5) &&
+                inRange(values[15], INT32_MIN, INT32_MAX) &&
+                inRange(values[16], INT32_MIN, INT32_MAX) &&
+                inRange(values[17], 0, UINT32_MAX) &&
+                inRange(values[18], 0, 3) &&
+                inRange(values[19], 0, UINT16_MAX);
+            for (size_t index = 2; index <= 7; ++index) {
+                schemaValid = schemaValid && inRange(values[index], INT32_MIN, INT32_MAX);
+            }
+            if (!schemaValid) {
+                ++s_fast_state_diagnostics.schema_errors;
+                return;
+            }
+            const uint32_t sequence = static_cast<uint32_t>(values[0]);
+            const uint32_t controllerTime = static_cast<uint32_t>(values[1]);
+            const bool controllerRestarted =
+                s_fast_state_diagnostics.last_sequence != 0 &&
+                !FastStateProtocol::sequenceIsNewer(
+                    sequence, s_fast_state_diagnostics.last_sequence) &&
+                static_cast<int32_t>(controllerTime - s_fast_state_diagnostics.controller_time_ms) < 0;
+            if (!controllerRestarted &&
+                s_fast_state_diagnostics.last_sequence != 0 &&
+                !FastStateProtocol::sequenceIsNewer(
+                    sequence, s_fast_state_diagnostics.last_sequence)) {
+                ++s_fast_state_diagnostics.schema_errors;
+                return;
+            }
+            if (controllerRestarted) {
+                s_fast_state_diagnostics.last_sequence = 0;
+            } else if (s_fast_state_diagnostics.last_sequence != 0) {
+                const uint32_t delta = sequence - s_fast_state_diagnostics.last_sequence;
+                if (delta > 1) s_fast_state_diagnostics.skipped_frames += delta - 1;
+            }
+
+            const int32_t machine[3] = {
+                static_cast<int32_t>(values[2]), static_cast<int32_t>(values[3]), static_cast<int32_t>(values[4])
+            };
+            const int32_t offset[3] = {
+                static_cast<int32_t>(values[5]), static_cast<int32_t>(values[6]), static_cast<int32_t>(values[7])
+            };
+            const int machineAxes[3] = { 0, 2, 5 };
+            n_axes = 6;
+            for (size_t index = 0; index < 3; ++index) {
+                myAxes[machineAxes[index]] = fromMm(static_cast<pos_t>(machine[index] - offset[index]));
+                myLimitSwitches[machineAxes[index]] =
+                    (static_cast<uint8_t>(values[10]) & (1U << index)) != 0;
+            }
+            myProbeSwitch = values[11] != 0;
+            set_homed_machine_mask(static_cast<uint8_t>(values[9]));
+
+            static const char* stateNames[] = {
+                "Idle", "Alarm", "Check", "Home", "Run", "Hold:1", "Hold:0",
+                "Jog", "Door:1", "Sleep", "Alarm", "Alarm", "Idle"
+            };
+            const uint8_t controllerState = static_cast<uint8_t>(values[8]);
+            show_state(controllerState < sizeof(stateNames) / sizeof(stateNames[0])
+                           ? stateNames[controllerState]
+                           : "Alarm");
+            lathe_apply_fast_state(
+                static_cast<uint8_t>(values[14]),
+                static_cast<int32_t>(values[15]),
+                static_cast<int32_t>(values[16]),
+                static_cast<uint32_t>(values[17]),
+                static_cast<uint8_t>(values[18]),
+                static_cast<uint16_t>(values[19]));
+
+            const uint32_t now = millis();
+            s_fast_state_diagnostics.valid_frames++;
+            s_fast_state_diagnostics.last_sequence = sequence;
+            s_fast_state_diagnostics.controller_time_ms = controllerTime;
+            s_fast_state_diagnostics.last_valid_ms = now;
+            s_fast_state_diagnostics.latest_jog_id = static_cast<uint32_t>(values[12]);
+            s_fast_state_diagnostics.stale = false;
+            s_fast_state_diagnostics.lease_accepted =
+                (static_cast<uint16_t>(values[19]) & (1U << 1)) != 0;
+            s_fast_state_ever_received = true;
+            if (current_scene != nullptr) current_scene->onDROChange();
+            return;
+        }
+
+        if (count == 4 && strcmp(fields[0], "@A1") == 0) {
+            s_fast_state_diagnostics.latest_jog_id = strtoul(fields[1], nullptr, 10);
+            s_fast_state_diagnostics.latest_jog_accepted = strtoul(fields[2], nullptr, 10) != 0;
+            s_fast_state_diagnostics.latest_jog_error = strtoul(fields[3], nullptr, 10);
+        } else if (count == 3 && strcmp(fields[0], "@L1") == 0) {
+            s_fast_state_diagnostics.lease_sequence = strtoul(fields[1], nullptr, 10);
+            s_fast_state_diagnostics.lease_accepted = strtoul(fields[2], nullptr, 10) != 0;
+        } else {
+            ++s_fast_state_diagnostics.schema_errors;
+        }
+        return;
+    }
     // $-responses are config, never JSON. If FluidNC tore down a JSON
     // document by sending a $-response (rare, but happens on some error
     // paths), drop the depth counter so the next document starts clean.
@@ -587,4 +734,43 @@ void update_rx_time() {
 
 const FluidNcLinkDiagnostics& fluidnc_link_diagnostics() {
     return s_link_diagnostics;
+}
+
+const FastStateDiagnostics& fast_state_diagnostics() {
+    return s_fast_state_diagnostics;
+}
+
+bool fast_state_received() {
+    return s_fast_state_ever_received;
+}
+
+bool fast_state_fresh() {
+    return s_fast_state_ever_received &&
+           FastStateProtocol::timestampFresh(
+               millis(), s_fast_state_diagnostics.last_valid_ms, FastStateProtocol::StaleAfterMs);
+}
+
+bool fast_state_should_renew_lease() {
+    return !s_fast_state_ever_received || fast_state_fresh();
+}
+
+void fast_state_poll() {
+    if (!s_fast_state_ever_received || fast_state_fresh() || s_fast_state_diagnostics.stale) return;
+    s_fast_state_diagnostics.stale = true;
+    s_fast_state_diagnostics.lease_accepted = false;
+    ++s_fast_state_diagnostics.stale_transitions;
+    if (state == Jog) send_jog_cancel();
+    state = Disconnected;
+    my_state_string = "N/C";
+    jog_window_reset();
+    operator_note_transport_lost();
+    request_redisplay();
+}
+
+void fast_state_note_transport_reset() {
+    s_fast_state_ever_received = false;
+    s_fast_state_diagnostics.last_sequence = 0;
+    s_fast_state_diagnostics.last_valid_ms = 0;
+    s_fast_state_diagnostics.lease_accepted = false;
+    s_fast_state_diagnostics.stale = true;
 }

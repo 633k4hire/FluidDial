@@ -42,6 +42,15 @@ void clear_homed_axes() {
     homed_axes = 0;
     request_redisplay();
 }
+void set_homed_machine_mask(uint8_t xzc_mask) {
+    const int next = ((xzc_mask & 0x01) ? (1 << 0) : 0) |
+                     ((xzc_mask & 0x02) ? (1 << 2) : 0) |
+                     ((xzc_mask & 0x04) ? (1 << 5) : 0);
+    if (homed_axes != next) {
+        homed_axes = next;
+        request_redisplay();
+    }
+}
 
 static bool homing_query_supported(int display_axis) {
     // This lathe's C coordinate represents the shared spindle/chuck. It has

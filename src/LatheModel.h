@@ -126,6 +126,12 @@ bool operator_basic_motion_actions_available();
 void operator_note_transport_lost();
 void operator_note_transport_recovered();
 void operator_note_ota_active(bool active);
+void lathe_apply_fast_state(uint8_t spindle_state,
+                            int32_t commanded_rpm_tenths,
+                            int32_t measured_rpm_tenths,
+                            uint32_t encoder_age_ms,
+                            uint8_t owner,
+                            uint16_t flags);
 
 void request_lathe_status(bool force = false);
 void lathe_schedule_status_refresh(bool immediate = true);

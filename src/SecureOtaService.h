@@ -41,5 +41,6 @@ bool secure_ota_legacy_upload_allowed();
 bool secure_ota_uart_pairing_request(char* command, size_t capacity);
 bool secure_ota_accept_uart_pairing_response(const char* response);
 void secure_ota_note_uart_link_reset();
+bool secure_ota_uart_lease_request(char* command, size_t capacity, uint32_t& sequence);
 
 #endif

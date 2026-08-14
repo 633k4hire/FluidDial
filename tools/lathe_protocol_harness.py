@@ -692,7 +692,8 @@ def assert_maijker_build_contract() -> None:
     assert 'send_line("$RI=1000", 500);' in main
     assert "for (int i = 0; i < 4096; i++)" in main
     assert "lathe_poll_status();" in main
-    assert 'send_line("$RI=1000");' in fluidnc
+    assert 'send_line("$RI=0");' in fluidnc
+    assert "FastState replaces periodic verbose status" in fluidnc
     assert 'send_line("$RI=200");' not in fluidnc
     assert "LATHE_STATUS_REPLY_TIMEOUT_MS     = 5000" in lathe
     assert "s_status_retry_count >= 2" in lathe

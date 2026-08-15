@@ -212,7 +212,7 @@ void loop() {
             }
             next_uart_pairing_at = millis() + 3000U;
         }
-        if (uart_connected && fast_state_should_renew_lease() &&
+        if (uart_connected && state != Homing && fast_state_should_renew_lease() &&
             static_cast<int32_t>(millis() - next_uart_lease_at) >= 0) {
             char command[192];
             uint32_t lease_sequence = 0;

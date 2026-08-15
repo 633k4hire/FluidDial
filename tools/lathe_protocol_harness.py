@@ -214,6 +214,15 @@ def active_profile(status: LatheStatus) -> list[dict[str, Any]]:
     return LATHE_PROFILE if status.available and status.enabled else DEFAULT_PROFILE
 
 
+def compact_homed_mask_to_display(mask: int, profile: list[dict[str, Any]]) -> int:
+    result = 0
+    for compact_axis, machine_axis in enumerate((0, 2, 5)):
+        for display_axis, axis in enumerate(profile):
+            if mask & (1 << compact_axis) and axis["machine_axis"] == machine_axis:
+                result |= 1 << display_axis
+    return result
+
+
 def parse_command_response(payload: str) -> CommandResult:
     document = json.loads(payload)
     command = int(document["cmd"])
@@ -298,6 +307,9 @@ def assert_profile_mapping() -> None:
     assert LATHE_PROFILE[2]["letter"] == "C"
     assert [axis["machine_axis"] for axis in LATHE_PROFILE] == [0, 2, 5]
     assert [axis["config_path"] for axis in LATHE_PROFILE] == ["$/axes/x", "$/axes/z", "$/axes/c"]
+    assert compact_homed_mask_to_display(0b011, LATHE_PROFILE) == 0b011
+    assert compact_homed_mask_to_display(0b111, LATHE_PROFILE) == 0b111
+    assert compact_homed_mask_to_display(0b011, DEFAULT_PROFILE) == 0b101
 
 
 def assert_esp421_parsing() -> None:
@@ -588,6 +600,7 @@ def assert_maijker_build_contract() -> None:
     jog = (root / "src" / "MultiJogScene.cpp").read_text(encoding="utf-8")
     fluidnc = (root / "src" / "FluidNCModel.cpp").read_text(encoding="utf-8")
     file_parser = (root / "src" / "FileParser.cpp").read_text(encoding="utf-8")
+    homing = (root / "src" / "HomingScene.cpp").read_text(encoding="utf-8")
     manual = (root / "src" / "LatheManualScene.cpp").read_text(encoding="utf-8")
 
     section = platformio.split("[env:maijker_m5dial]", 1)[1].split("[env:", 1)[0]
@@ -700,6 +713,22 @@ def assert_maijker_build_contract() -> None:
     assert "LATHE_STATUS_REPLY_TIMEOUT_MS     = 5000" in lathe
     assert "s_status_retry_count >= 2" in lathe
     assert "s_pending_status_saw_enabled" in lathe
+    assert "profile_display_axis_for_machine(machine_axes[compact_axis])" in homing
+    assert "state != Homing && fast_state_should_renew_lease()" in main
+    assert "previous_state == Homing && state != Homing" in fluidnc
+    homing_stale = fluidnc.split("void fast_state_poll()", 1)[1].split(
+        "void fast_state_note_transport_reset()", 1
+    )[0]
+    assert "if (state == Homing)" in homing_stale
+    assert homing_stale.index("if (state == Homing)") < homing_stale.index(
+        "state = Disconnected;"
+    )
+    assert "s_link_timed_out = true;" in fluidnc
+    assert "s_link_timed_out = false;" in fluidnc
+    lathe_poll = lathe.split("void lathe_poll_status()", 1)[1].split(
+        "void lathe_mark_status_unavailable()", 1
+    )[0]
+    assert "state == Homing" in lathe_poll
 
     # Manual-lathe helpers use temporary-modal jogs, never silently enable
     # encoder threading, and expose a common cancel path.

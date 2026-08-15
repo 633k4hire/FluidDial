@@ -43,9 +43,14 @@ void clear_homed_axes() {
     request_redisplay();
 }
 void set_homed_machine_mask(uint8_t xzc_mask) {
-    const int next = ((xzc_mask & 0x01) ? (1 << 0) : 0) |
-                     ((xzc_mask & 0x02) ? (1 << 2) : 0) |
-                     ((xzc_mask & 0x04) ? (1 << 5) : 0);
+    const int machine_axes[] = { 0, 2, 5 };
+    int       next           = 0;
+    for (int compact_axis = 0; compact_axis < 3; ++compact_axis) {
+        const int display_axis = profile_display_axis_for_machine(machine_axes[compact_axis]);
+        if ((xzc_mask & (1U << compact_axis)) && display_axis >= 0) {
+            next |= 1U << display_axis;
+        }
+    }
     if (homed_axes != next) {
         homed_axes = next;
         request_redisplay();

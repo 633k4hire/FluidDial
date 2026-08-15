@@ -307,6 +307,12 @@ extern "C" void show_state(const char* state_string) {
     if (decode_state_string(state_string, new_state) && state != new_state) {
         bool was_disconnected = state == Disconnected;
         state = new_state;
+        if (previous_state == Homing && state != Homing && s_fast_state_diagnostics.stale) {
+            // $H owns FluidNC's line executor, so FastState and lease renewal
+            // pause while realtime '?' reports continue to prove the UART.
+            // Re-arm the lease as soon as the realtime state leaves Homing.
+            fast_state_note_transport_reset();
+        }
         if (previous_state == Homing && state == Idle) {
             // ESP421 can be interleaved with the final homing status burst.
             // Defer a clean detail refresh to the normal application loop.
@@ -581,6 +587,7 @@ bool starting = true;
 
 // Counts consecutive disconnect_ms timeouts without RX, for the recovery ladder.
 static int s_consecutive_timeouts = 0;
+static bool s_link_timed_out = false;
 
 // Set by pendant_wait_for_fluidnc_ready() so fnc_is_connected() does not
 // immediately fire a redundant ping right after a successful handshake.
@@ -704,7 +711,11 @@ bool fnc_is_connected() {
         }
         return false;             // Do we need a value for "unknown"?
     }
-    if ((now - disconnect_ms) >= 0) {
+    if (s_link_timed_out && (now - disconnect_ms) < 0) {
+        return false;
+    }
+    if (s_link_timed_out || (now - disconnect_ms) >= 0) {
+        s_link_timed_out = true;
         s_consecutive_timeouts++;
         ++s_link_diagnostics.timeout_events;
         s_link_diagnostics.last_timeout_ms      = now;
@@ -729,6 +740,7 @@ void update_rx_time() {
     next_ping_ms  = now + ping_interval_ms;
     disconnect_ms = now + disconnect_interval_ms;
     s_consecutive_timeouts = 0;
+    s_link_timed_out = false;
     s_link_diagnostics.consecutive_timeouts = 0;
 }
 
@@ -759,6 +771,12 @@ void fast_state_poll() {
     s_fast_state_diagnostics.stale = true;
     s_fast_state_diagnostics.lease_accepted = false;
     ++s_fast_state_diagnostics.stale_transitions;
+    if (state == Homing) {
+        // Homing is a synchronous line command, but realtime status and the
+        // independent UART watchdog remain live. Keep the truthful Home state
+        // while all FastState-gated motion controls fail closed.
+        return;
+    }
     if (state == Jog) send_jog_cancel();
     state = Disconnected;
     my_state_string = "N/C";

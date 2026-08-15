@@ -392,7 +392,8 @@ void lathe_schedule_status_refresh(bool immediate) {
 }
 
 void lathe_poll_status() {
-    if (state == Disconnected || s_operator_link_state == OperatorLinkState::Updating) {
+    if (state == Disconnected || state == Homing ||
+        s_operator_link_state == OperatorLinkState::Updating) {
         return;
     }
     uint32_t now = millis();

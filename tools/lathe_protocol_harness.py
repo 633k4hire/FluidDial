@@ -755,6 +755,10 @@ def assert_maijker_build_contract() -> None:
     assert "enum class WifiReconnectPhase" in wifi
     assert "service_wifi_reconnect(now);" in wifi
     assert "WiFi.disconnect(restart_driver, false);" in wifi
+    assert "if (_wifi_auth_failure || _wifi_reconnect_phase" not in wifi
+    assert "allow_retry       = true;" in wifi
+    assert "&& !_wifi_auth_failure" not in wifi
+    assert "WiFi disconnected without recovery state; retry scheduled" in wifi
     assert "if (!_secure_ota_only) {\n            set_disconnected_state();" in wifi
     retry = wifi.split("// Start recovery without blocking", 1)[1].split(
         "// Detect WiFi reconnects", 1

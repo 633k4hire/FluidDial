@@ -1679,7 +1679,7 @@ static uint32_t wifi_retry_backoff_ms() {
 }
 
 static void schedule_wifi_retry(uint32_t delay_ms) {
-    if (_wifi_auth_failure || _wifi_reconnect_phase != WifiReconnectPhase::Idle) {
+    if (_wifi_reconnect_phase != WifiReconnectPhase::Idle) {
         return;
     }
     uint32_t due = millis() + delay_ms;
@@ -1936,7 +1936,10 @@ void wifi_poll() {
                 reason == WIFI_REASON_MIC_FAILURE) {
                 new_msg           = MSG_CHECK_PASS;
                 stop_driver       = true;
-                allow_retry       = false;
+                // Authentication can recover after an access-point restart,
+                // credential rollout, or a transient WPA failure. Keep the
+                // diagnostic visible, but never make it a terminal state.
+                allow_retry       = true;
                 _wifi_auth_failure = true;
             } else if (reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT) {
                 // Cold-boot handshake timing is not proof of a bad password.
@@ -1973,9 +1976,11 @@ void wifi_poll() {
                 }
                 bool changed = (_wifi_error_msg != new_msg);
                 _wifi_error_msg = new_msg;
-                // Only arm a retry for not-found; never for wrong password.
+                // Every disconnected state retries indefinitely. A genuine
+                // credential error remains visible while retries continue at
+                // the bounded backoff interval.
                 if (allow_retry && !_wifi_retry_at) {
-                    schedule_wifi_retry(WIFI_RETRY_DELAY_MS);
+                    schedule_wifi_retry(wifi_retry_backoff_ms());
                 }
                 if (changed) request_redisplay();
             }
@@ -2046,11 +2051,19 @@ void wifi_poll() {
 
     if (!now_connected && _wifi_reconnect_phase == WifiReconnectPhase::Idle &&
         !_wifi_retry_at && _wifi_connect_start_ms &&
-        (uint32_t)(now - _wifi_connect_start_ms) > WIFI_CONNECT_TIMEOUT_MS &&
-        !_wifi_auth_failure) {
+        (uint32_t)(now - _wifi_connect_start_ms) > WIFI_CONNECT_TIMEOUT_MS) {
         _wifi_connect_start_ms = 0;
         schedule_wifi_retry(wifi_retry_backoff_ms());
         dbg_println("WiFi association timed out; retry scheduled");
+    }
+
+    // Recovery invariant: outside AP mode, a disconnected station must always
+    // be associating, waiting in a reconnect phase, or have a retry deadline.
+    // This guard repairs any unhandled SDK status/reason without rebooting.
+    if (!now_connected && _wifi_reconnect_phase == WifiReconnectPhase::Idle &&
+        !_wifi_retry_at && !_wifi_connect_start_ms) {
+        schedule_wifi_retry(wifi_retry_backoff_ms());
+        dbg_println("WiFi disconnected without recovery state; retry scheduled");
     }
 
     if (_secure_ota_only) {

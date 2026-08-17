@@ -201,15 +201,17 @@ sent to FluidNC as a filename.
   direction is blocked until FluidNC reports the spindle stopped. The panel
   identifies the `C_STEPPER` drive and distinguishes open-loop commanded speed
   from encoder-measured speed.
-- **C Position** provides 1/5/15/45/90 degree detent presets. It uses the live
-  C-axis positioning ceiling and the same duration-based feed policy as normal
-  precise jogging, rather than a hardcoded 1 RPM. It requires a
-  confirmed arm, reports the 0.225 degree microstep quantum, and carries
-  fractional residuals between detents so rounding does not accumulate drift.
-- On the main **Jog** screen, precise C dial moves use the selected
-  0.225/2.25/22.5/90 degree step exactly. The same selection sets the red/green
-  hold-to-jog ceiling to approximately 0.75/7.5/75/250 RPM. This keeps fine C
-  positioning slow while retaining a deliberate fast rotary jog.
+- **C Position** is a legacy/deprecated helper. Its preset behavior is retained
+  for compatibility, but it is not part of the current lathe rollout and must
+  not define the main Jog screen's dial semantics.
+- On the main **Jog** screen, C follows the highlighted DRO digit exactly, just
+  like X and Z: in metric display mode the choices are 0.01/0.1/1/10 degrees
+  per detent. FluidDial sends that requested angular increment without applying
+  the legacy C Position presets or doing its own step quantization. FluidNC
+  rounds absolute planner targets to the C motor's 0.225-degree physical step,
+  so sub-step requests accumulate and do not create long-term position drift.
+  The same digit selection sets the red/green hold-to-jog ceiling to
+  approximately 0.75/7.5/75/250 RPM.
 - **Thread Proof** uses a single temporary-modal coordinated C/Z jog. It
   computes C degrees from pitch and Z travel, caps requested RPM using the
   configured C-axis maximum rate, and requires the C-stepper spindle to be

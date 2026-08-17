@@ -514,12 +514,9 @@ public:
     }
 
     e4_t rotary_c_distance(int index) const {
-        switch (std::max(0, std::min(index, 3))) {
-            case 0: return 2250;    // 0.225 degrees, one 1/8 microstep
-            case 1: return 22500;   // 2.25 degrees, ten microsteps
-            case 2: return 225000;  // 22.5 degrees
-            default: return 900000; // 90 degrees
-        }
+        // C uses the same highlighted decimal digit that the operator sees in
+        // the DRO: 0.01, 0.1, 1, and 10 degrees in metric display mode.
+        return e4_power10(std::max(0, std::min(index, 3)) - num_digits());
     }
 
     int axis_min_index(int axis) const { return rotary_c_axis(axis) ? 0 : min_index(); }
@@ -538,11 +535,18 @@ public:
     }
 
     e4_t selected_c_jog_feed() {
-        // One displayed C step takes about PRECISE_C_MOVE_MS, capped at the
-        // existing 250 RPM jog ceiling. Keep the calculation in int64_t:
-        // 243000 degree/min from the machine config overflows e4_t.
-        const int64_t requested = static_cast<int64_t>(selected_c_distance()) * 60000 / PRECISE_C_MOVE_MS;
-        return requested > C_DYNAMIC_MAX_FEED ? C_DYNAMIC_MAX_FEED : static_cast<e4_t>(requested);
+        // Preserve the reviewed four-speed C hold-jog ladder while the dial
+        // distance follows the actual highlighted decimal digit.
+        for (int axis = 0; axis < num_axes; ++axis) {
+            if (!selected(axis) || !rotary_c_axis(axis)) continue;
+            switch (std::max(0, std::min(_dist_index[axis], 3))) {
+                case 0: return 2700000;    // 270 deg/min = 0.75 RPM
+                case 1: return 27000000;   // 2700 deg/min = 7.5 RPM
+                case 2: return 270000000;  // 27000 deg/min = 75 RPM
+                default: return C_DYNAMIC_MAX_FEED;  // 250 RPM
+            }
+        }
+        return 0;
     }
 
     bool c_axis_selected() {

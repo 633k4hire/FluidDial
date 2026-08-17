@@ -534,12 +534,26 @@ def assert_c_jog_feed_policy() -> None:
     # maximum cannot be represented, so C jog feeds must be capped in range.
     assert 243_000 * 10_000 > 2_147_483_647
 
-    precise_ms = 50
-    max_feed_e4 = 90_000 * 10_000
-    steps_e4 = [2_250, 22_500, 225_000, 900_000]
-    feeds_e4 = [min(step * 60_000 // precise_ms, max_feed_e4) for step in steps_e4]
-    assert feeds_e4 == [2_700_000, 27_000_000, 270_000_000, 900_000_000]
-    assert [feed / 10_000 / 360 for feed in feeds_e4] == [0.75, 7.5, 75.0, 250.0]
+    # Main Jog is digit-driven, not coupled to the legacy C Position presets.
+    # In metric mode the four highlighted digits request 0.01/0.1/1/10 degrees.
+    increments_e4 = [100, 1_000, 10_000, 100_000]
+    assert [value / 10_000 for value in increments_e4] == [0.01, 0.1, 1.0, 10.0]
+
+    hold_feeds_e4 = [2_700_000, 27_000_000, 270_000_000, 900_000_000]
+    assert [feed / 10_000 / 360 for feed in hold_feeds_e4] == [0.75, 7.5, 75.0, 250.0]
+
+    # FluidNC plans absolute targets. At 1,600 C steps/revolution, repeated
+    # exact 1-degree requests distribute four- and five-step increments while
+    # the final target lands on one revolution with no cumulative drift.
+    steps_per_revolution = 1_600
+    degrees_per_revolution_e4 = 360 * 10_000
+    absolute_steps = [
+        (click * 10_000 * steps_per_revolution + degrees_per_revolution_e4 // 2)
+        // degrees_per_revolution_e4
+        for click in range(1, 361)
+    ]
+    assert absolute_steps[-1] == steps_per_revolution
+    assert set(b - a for a, b in zip([0] + absolute_steps[:-1], absolute_steps)) == {4, 5}
 
 
 def assert_command_results() -> None:
@@ -778,8 +792,8 @@ def assert_maijker_build_contract() -> None:
     )[0]
     assert "delay(" not in retry
 
-    # X/Z retain the gentle linear profile while C uses exact 1/8-step rotary
-    # increments and degree-per-minute feed ceilings.
+    # X/Z and C all follow the highlighted DRO digit. C retains independent
+    # degree-per-minute hold-jog ceilings and lets FluidNC quantize motor steps.
     assert "static const int DEFAULT_DIST_INDEX = 1;" in jog
     assert 'getPref("GentleJogV2", &gentle_jog_profile)' in jog
     assert 'setPref("GentleJogV2", 1)' in jog
@@ -789,16 +803,20 @@ def assert_maijker_build_contract() -> None:
     assert "static const uint32_t PRECISE_C_MOVE_MS = 50;" in jog
     assert "C_DYNAMIC_MIN_FEED = 180000000" in jog
     assert "C_DYNAMIC_MAX_FEED = 900000000" in jog
-    assert "case 0: return 2250;" in jog
-    assert "case 1: return 22500;" in jog
-    assert "case 2: return 225000;" in jog
-    assert "default: return 900000;" in jog
+    assert "the actual highlighted decimal digit" in jog
+    assert "return e4_power10(std::max(0, std::min(index, 3)) - num_digits());" in jog
+    assert "case 0: return 2700000;" in jog
+    assert "case 1: return 27000000;" in jog
+    assert "case 2: return 270000000;" in jog
+    assert "default: return C_DYNAMIC_MAX_FEED;" in jog
+    assert "225000" not in jog
+    assert "quantized_c_increment" not in jog
+    assert "_c_residual_e4" not in jog
     assert 'cmd += c_only ? "G21"' in jog
     assert "c_axis_motion_blocked()" in jog
     assert "e4_t precise_jog_feed(e4_t move)" in jog
     assert "e4_t     feed = precise_jog_feed(move);" in jog
     assert "e4_t selected_c_jog_feed()" in jog
-    assert "243000 degree/min from the machine config overflows e4_t" in jog
     assert "c_only ? selected_c_jog_feed()" in jog
     assert "e4_from_int(243000)" not in jog
 

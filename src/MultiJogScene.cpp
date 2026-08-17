@@ -530,6 +530,21 @@ public:
                                    : e4_power10(_dist_index[axis] - num_digits());
     }
 
+    e4_t selected_c_distance() {
+        for (int axis = 0; axis < num_axes; ++axis) {
+            if (selected(axis) && rotary_c_axis(axis)) return distance(axis);
+        }
+        return 0;
+    }
+
+    e4_t selected_c_jog_feed() {
+        // One displayed C step takes about PRECISE_C_MOVE_MS, capped at the
+        // existing 250 RPM jog ceiling. Keep the calculation in int64_t:
+        // 243000 degree/min from the machine config overflows e4_t.
+        const int64_t requested = static_cast<int64_t>(selected_c_distance()) * 60000 / PRECISE_C_MOVE_MS;
+        return requested > C_DYNAMIC_MAX_FEED ? C_DYNAMIC_MAX_FEED : static_cast<e4_t>(requested);
+    }
+
     bool c_axis_selected() {
         for (int axis = 0; axis < num_axes; ++axis) {
             if (selected(axis) && rotary_c_axis(axis)) return true;
@@ -666,8 +681,9 @@ public:
             if (machine_profile_is_lathe()) {
                 for (int axis = 0; axis < num_axes; ++axis) {
                     if (rotary_c_axis(axis)) {
-                        char c_step[40];
-                        snprintf(c_step, sizeof(c_step), "C step %s deg", e4_to_cstr(distance(axis), 3));
+                        char c_step[64];
+                        const double hold_rpm = static_cast<double>(selected_c_jog_feed()) / 10000.0 / 360.0;
+                        snprintf(c_step, sizeof(c_step), "C %s deg  Hold %.2f RPM", e4_to_cstr(distance(axis), 3), hold_rpm);
                         const char* c_status = !only_c_axis_selected() ? "C jog must be alone" :
                                                (c_axis_motion_blocked() ? "C locked: stop spindle" : c_step);
                         centered_text(c_status,
@@ -992,7 +1008,7 @@ public:
         const bool c_only = only_c_axis_selected();
         const uint32_t target_ms = c_only ? PRECISE_C_MOVE_MS : PRECISE_MOVE_MS;
         int64_t feed64 = (int64_t)move * 60000 / target_ms;
-        e4_t   f_max  = c_only ? e4_from_int(243000) : e4_from_int(inInches ? 24 : 600);
+        e4_t   f_max  = c_only ? selected_c_jog_feed() : e4_from_int(inInches ? 24 : 600);
         return feed64 > f_max ? f_max : (e4_t)feed64;
     }
 
@@ -1037,7 +1053,7 @@ public:
 
         const bool c_only = only_c_axis_selected();
         e4_t max_feed = c_only ? C_DYNAMIC_MAX_FEED : e4_from_int(inInches ? 24 : 600);
-        int64_t requested_feed = c_only ? C_DYNAMIC_MAX_FEED : static_cast<int64_t>(total_distance) * 300;
+        int64_t requested_feed = c_only ? selected_c_jog_feed() : static_cast<int64_t>(total_distance) * 300;
         e4_t feedrate = requested_feed > max_feed ? max_feed : static_cast<e4_t>(requested_feed);
 
         std::string cmd("$J=G91");
@@ -1143,8 +1159,8 @@ public:
         uint32_t dt     = (_last_mpg_ms == 0) ? MPG_INTERVAL_MS : (now - _last_mpg_ms);
         int64_t  feed64 = (int64_t)move * 60000 / (int64_t)dt;
         const bool c_only = only_c_axis_selected();
-        e4_t     f_max  = c_only ? C_DYNAMIC_MAX_FEED : e4_from_int(inInches ? 24 : 600);
-        e4_t     f_min  = c_only ? C_DYNAMIC_MIN_FEED : e4_from_int(inInches ? 2 : 60);
+        e4_t     f_max  = c_only ? selected_c_jog_feed() : e4_from_int(inInches ? 24 : 600);
+        e4_t     f_min  = c_only ? std::min(C_DYNAMIC_MIN_FEED, f_max) : e4_from_int(inInches ? 2 : 60);
         e4_t     feed   = (feed64 > f_max) ? f_max : (feed64 < f_min ? f_min : (e4_t)feed64);
 
         uint32_t outstanding =

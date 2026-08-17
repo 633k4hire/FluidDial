@@ -206,6 +206,10 @@ sent to FluidNC as a filename.
   precise jogging, rather than a hardcoded 1 RPM. It requires a
   confirmed arm, reports the 0.225 degree microstep quantum, and carries
   fractional residuals between detents so rounding does not accumulate drift.
+- On the main **Jog** screen, precise C dial moves use the selected
+  0.225/2.25/22.5/90 degree step exactly. The same selection sets the red/green
+  hold-to-jog ceiling to approximately 0.75/7.5/75/250 RPM. This keeps fine C
+  positioning slow while retaining a deliberate fast rotary jog.
 - **Thread Proof** uses a single temporary-modal coordinated C/Z jog. It
   computes C degrees from pitch and Z travel, caps requested RPM using the
   configured C-axis maximum rate, and requires the C-stepper spindle to be

@@ -529,6 +529,19 @@ def assert_jog_angle_math() -> None:
     assert sent_x == 1000
 
 
+def assert_c_jog_feed_policy() -> None:
+    # e4_t is signed 32-bit fixed point with four decimal places. The machine
+    # maximum cannot be represented, so C jog feeds must be capped in range.
+    assert 243_000 * 10_000 > 2_147_483_647
+
+    precise_ms = 50
+    max_feed_e4 = 90_000 * 10_000
+    steps_e4 = [2_250, 22_500, 225_000, 900_000]
+    feeds_e4 = [min(step * 60_000 // precise_ms, max_feed_e4) for step in steps_e4]
+    assert feeds_e4 == [2_700_000, 27_000_000, 270_000_000, 900_000_000]
+    assert [feed / 10_000 / 360 for feed in feeds_e4] == [0.75, 7.5, 75.0, 250.0]
+
+
 def assert_command_results() -> None:
     tool_save_ok = parse_command_response(json.dumps({"cmd": "422", "status": "ok", "data": "tool saved"}))
     assert tool_save_ok.known and tool_save_ok.command == 422 and tool_save_ok.ok
@@ -784,6 +797,10 @@ def assert_maijker_build_contract() -> None:
     assert "c_axis_motion_blocked()" in jog
     assert "e4_t precise_jog_feed(e4_t move)" in jog
     assert "e4_t     feed = precise_jog_feed(move);" in jog
+    assert "e4_t selected_c_jog_feed()" in jog
+    assert "243000 degree/min from the machine config overflows e4_t" in jog
+    assert "c_only ? selected_c_jog_feed()" in jog
+    assert "e4_from_int(243000)" not in jog
 
     assert "spindle_minimum_rpm" in manual
     assert 'send_line("M5");' in manual
@@ -827,6 +844,7 @@ def main() -> None:
     assert_command_lifecycle()
     assert_manual_lathe_math()
     assert_jog_angle_math()
+    assert_c_jog_feed_policy()
     assert_maijker_build_contract()
     print("lathe protocol harness: all checks passed")
 

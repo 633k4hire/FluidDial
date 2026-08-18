@@ -111,6 +111,13 @@ stores the current lathe state. The fields consumed by the UI include:
 - `Feedback stale`
 - `Feedback fault`
 
+While continuous C owns the chuck, the Spindle and Jog scenes use the compact
+`ESP430` live report at their one-second refresh cadence. The report is applied
+as an atomic delta over the most recent complete `ESP421` document, so static
+configuration and tool data remain valid. `ESP430` also renews the controller's
+spindle operator heartbeat. Once spindle ownership ends, normal full `ESP421`
+refreshes resume.
+
 ## Five-Tool Turret UI
 
 The Tools scene becomes a fixed lathe tool panel with `T1` through `T5`.

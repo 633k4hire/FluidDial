@@ -519,8 +519,10 @@ private:
     std::string _id;
     std::string _value;
     int         _level = 0;
+    bool        _live  = false;
 
 public:
+    explicit LatheStatusListener(bool live) : _live(live) {}
     void whitespace(char c) override {}
     void startDocument() override {}
     void startArray() override {}
@@ -554,12 +556,16 @@ public:
     }
 
     void endArray() override {
-        lathe_finish_status_update(true);
+        if (_live) lathe_finish_live_status_update(true);
+        else lathe_finish_status_update(true);
         parser.setListener(pInitialListener);
     }
 
     void endDocument() override {}
-} latheStatusListener;
+};
+
+LatheStatusListener latheStatusListener(false);
+LatheStatusListener latheLiveStatusListener(true);
 
 bool is_file(const char* str, const char* filename) {
     const char* s = strstr(str, filename);
@@ -648,6 +654,9 @@ public:
         if (_cmd == "421" && !_lathe_data_started) {
             lathe_finish_status_update(false);
         }
+        if (_cmd == "430" && !_lathe_data_started) {
+            lathe_finish_live_status_update(false);
+        }
         if (_cmd == "422" || _cmd == "423") {
             lathe_handle_command_response(atoi(_cmd.c_str()), _status == "ok", _data.c_str());
         }
@@ -662,11 +671,16 @@ public:
         }
     }
     void startArray() override {
-        if (_key == DATA && _cmd == "421") {
+        if (_key == DATA && (_cmd == "421" || _cmd == "430")) {
             _lathe_data_started = true;
             _key                = NONE;
-            lathe_begin_status_update();
-            parser.setListener(&latheStatusListener);
+            if (_cmd == "430") {
+                lathe_begin_live_status_update();
+                parser.setListener(&latheLiveStatusListener);
+            } else {
+                lathe_begin_status_update();
+                parser.setListener(&latheStatusListener);
+            }
         }
     }
     void startObject() override {}

@@ -747,6 +747,12 @@ def assert_maijker_build_contract() -> None:
     assert "LATHE_STATUS_REPLY_TIMEOUT_MS     = 5000" in lathe
     assert "s_status_retry_count >= 2" in lathe
     assert "s_pending_status_saw_enabled" in lathe
+    assert 'send_line("[ESP430]", 500);' in lathe
+    assert "s_pending_status             = s_status;" in lathe
+    assert "lathe_finish_live_status_update" in file_parser
+    assert '(_cmd == "421" || _cmd == "430")' in file_parser
+    assert "request_lathe_live_status();" in manual
+    assert "request_lathe_live_status();" in jog
 
     # Manual-lathe helpers use temporary-modal jogs, never silently enable
     # encoder threading, and expose a common cancel path.

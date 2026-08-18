@@ -20,6 +20,8 @@ static LatheStatus        s_pending_status;
 static LatheCommandResult s_last_command;
 static uint32_t           s_last_status_request_ms = 0;
 static bool               s_status_reply_expected  = false;
+static uint32_t           s_last_live_status_request_ms = 0;
+static bool               s_live_status_reply_expected  = false;
 static uint32_t           s_next_status_request_ms = 0;
 static uint8_t            s_status_retry_count     = 0;
 static LatheSyncDiagnostics s_sync_diagnostics;
@@ -290,6 +292,7 @@ static void note_status_sync_failure(bool timed_out) {
 void operator_note_transport_lost() {
     json_reset_depth();
     s_status_reply_expected = false;
+    s_live_status_reply_expected = false;
     s_next_status_request_ms = 0;
     if (s_last_command.pending) {
         complete_command(s_last_command.command,
@@ -311,6 +314,7 @@ void operator_note_transport_lost() {
 void operator_note_transport_recovered() {
     json_reset_depth();
     s_status_reply_expected = false;
+    s_live_status_reply_expected = false;
     s_last_status_request_ms = 0;
     s_next_status_request_ms = millis();
     s_status_retry_count     = 0;
@@ -336,6 +340,12 @@ void request_lathe_status(bool force) {
     }
 
     uint32_t now = millis();
+    if (s_live_status_reply_expected) {
+        if ((uint32_t)(now - s_last_live_status_request_ms) < 1000) {
+            return;
+        }
+        s_live_status_reply_expected = false;
+    }
     if (s_status_reply_expected &&
         (uint32_t)(now - s_last_status_request_ms) < LATHE_STATUS_REPLY_TIMEOUT_MS) {
         return;
@@ -349,6 +359,21 @@ void request_lathe_status(bool force) {
     ++s_sync_diagnostics.requests;
     s_sync_diagnostics.last_request_ms = now;
     send_line("[ESP421]", 500);
+}
+
+void request_lathe_live_status() {
+    if (state == Disconnected || s_status_reply_expected) {
+        return;
+    }
+
+    const uint32_t now = millis();
+    if (s_live_status_reply_expected &&
+        (uint32_t)(now - s_last_live_status_request_ms) < 1000) {
+        return;
+    }
+    s_last_live_status_request_ms = now;
+    s_live_status_reply_expected  = true;
+    send_line("[ESP430]", 500);
 }
 
 void lathe_schedule_status_refresh(bool immediate) {
@@ -389,6 +414,13 @@ void lathe_begin_status_update() {
     s_pending_status.known      = true;
     s_pending_status.available  = true;
     s_pending_status.updated_ms = millis();
+    s_pending_status_saw_enabled = false;
+}
+
+void lathe_begin_live_status_update() {
+    // ESP430 is an atomic delta over the last complete ESP421 document.
+    s_pending_status             = s_status;
+    s_pending_status.updated_ms  = millis();
     s_pending_status_saw_enabled = false;
 }
 
@@ -508,6 +540,17 @@ void lathe_finish_status_update(bool ok) {
     }
     ++s_sync_diagnostics.successful_replies;
     s_status_retry_count     = 0;
+    s_next_status_request_ms = millis() + LATHE_STATUS_REFRESH_MS;
+    apply_status(s_pending_status);
+}
+
+void lathe_finish_live_status_update(bool ok) {
+    s_live_status_reply_expected = false;
+    if (!ok || !s_pending_status_saw_enabled) {
+        return;
+    }
+    // Keep the heavyweight document dormant while a scene is actively
+    // refreshing compact spindle data.
     s_next_status_request_ms = millis() + LATHE_STATUS_REFRESH_MS;
     apply_status(s_pending_status);
 }

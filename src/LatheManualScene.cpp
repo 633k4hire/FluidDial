@@ -81,10 +81,11 @@ void draw_value_row(int y, const char* label, const char* value, bool selected, 
     text(value, 204, y + 1, value_color, TINY, middle_right);
 }
 
-void poll_lathe_status(uint32_t& last_request_ms) {
+void poll_lathe_status(uint32_t& last_request_ms, bool live = false) {
     const uint32_t now = millis();
     if ((uint32_t)(now - last_request_ms) >= 1000) {
-        request_lathe_status();
+        if (live) request_lathe_live_status();
+        else request_lathe_status();
         last_request_ms = now;
     }
 }
@@ -585,7 +586,7 @@ public:
     void onDialButtonPress() override { pop_scene(); }
 
     void onPoll() override {
-        poll_lathe_status(_last_status_ms);
+        poll_lathe_status(_last_status_ms, !spindle_stopped() || shared_chuck_is_spindle());
         if (_message == "STOPPING gently" && spindle_stopped()) {
             _message = "Stopped";
             request_redisplay();

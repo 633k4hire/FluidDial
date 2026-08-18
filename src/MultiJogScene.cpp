@@ -1338,7 +1338,11 @@ public:
 
     void onPoll() override {
         if (lathe_mode_active() && (uint32_t)(millis() - _last_lathe_status_ms) >= 1000) {
-            request_lathe_status();
+            const auto& lathe = lathe_status();
+            const bool spindle_owns_chuck =
+                lathe.shared_chuck_mode == "SPINDLE" || lathe.shared_chuck_mode == "spindle";
+            if (spindle_owns_chuck) request_lathe_live_status();
+            else request_lathe_status();
             _last_lathe_status_ms = millis();
         }
         if (state == Disconnected) {

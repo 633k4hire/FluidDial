@@ -128,6 +128,7 @@ void operator_note_transport_recovered();
 void operator_note_ota_active(bool active);
 
 void request_lathe_status(bool force = false);
+void request_lathe_live_status();
 void lathe_schedule_status_refresh(bool immediate = true);
 void lathe_poll_status();
 void lathe_mark_status_unavailable();
@@ -137,6 +138,8 @@ const LatheSyncDiagnostics& lathe_sync_diagnostics();
 void lathe_begin_status_update();
 void lathe_set_status_value(const char* id, const char* value);
 void lathe_finish_status_update(bool ok);
+void lathe_begin_live_status_update();
+void lathe_finish_live_status_update(bool ok);
 void lathe_handle_command_response(int command, bool ok, const char* message);
 void lathe_fail_pending_command(const char* message);
 void lathe_clear_recoverable_command();

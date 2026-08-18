@@ -534,26 +534,49 @@ def assert_c_jog_feed_policy() -> None:
     # maximum cannot be represented, so C jog feeds must be capped in range.
     assert 243_000 * 10_000 > 2_147_483_647
 
-    # Main Jog is digit-driven, not coupled to the legacy C Position presets.
-    # In metric mode the four highlighted digits request 0.01/0.1/1/10 degrees.
-    increments_e4 = [100, 1_000, 10_000, 100_000]
-    assert [value / 10_000 for value in increments_e4] == [0.01, 0.1, 1.0, 10.0]
+    # Main Jog is independent of the legacy C Position presets. The 0.01-degree
+    # choice is omitted because it cannot produce a step on the 1/16 grid.
+    increments_e4 = [1_000, 10_000, 100_000, 1_000_000]
+    assert [value / 10_000 for value in increments_e4] == [0.1, 1.0, 10.0, 100.0]
 
     hold_feeds_e4 = [2_700_000, 27_000_000, 270_000_000, 900_000_000]
     assert [feed / 10_000 / 360 for feed in hold_feeds_e4] == [0.75, 7.5, 75.0, 250.0]
 
-    # FluidNC plans absolute targets. At 1,600 C steps/revolution, repeated
-    # exact 1-degree requests distribute four- and five-step increments while
-    # the final target lands on one revolution with no cumulative drift.
-    steps_per_revolution = 1_600
-    degrees_per_revolution_e4 = 360 * 10_000
-    absolute_steps = [
-        (click * 10_000 * steps_per_revolution + degrees_per_revolution_e4 // 2)
-        // degrees_per_revolution_e4
-        for click in range(1, 361)
-    ]
-    assert absolute_steps[-1] == steps_per_revolution
-    assert set(b - a for a, b in zip([0] + absolute_steps[:-1], absolute_steps)) == {4, 5}
+    # At 3,200 C steps/revolution the physical command quantum is 0.1125 degree.
+    # Signed residual carry error-diffuses each requested detent onto that grid.
+    quantum_e4 = 1_125
+
+    def quantize(ideal_e4: int) -> int:
+        sign = -1 if ideal_e4 < 0 else 1
+        magnitude = abs(ideal_e4)
+        return sign * ((magnitude + quantum_e4 // 2) // quantum_e4) * quantum_e4
+
+    def emit(requests_e4: list[int]) -> tuple[list[int], int]:
+        residual_e4 = 0
+        emitted: list[int] = []
+        for requested_e4 in requests_e4:
+            move_e4 = quantize(requested_e4 + residual_e4)
+            residual_e4 += requested_e4 - move_e4
+            emitted.append(move_e4)
+        return emitted, residual_e4
+
+    tenth_moves, tenth_residual = emit([1_000] * 9)
+    assert sum(tenth_moves) == 9_000 == 8 * quantum_e4
+    assert tenth_residual == 0
+
+    degree_moves, degree_residual = emit([10_000] * 9)
+    assert sum(degree_moves) == 90_000  # Nine detents land at exactly 9 degrees.
+    assert {move // quantum_e4 for move in degree_moves} == {8, 9}
+    assert degree_residual == 0
+
+    quadrant_moves, quadrant_residual = emit([100_000] * 9)
+    assert sum(quadrant_moves) == 900_000  # Nine detents land at exactly 90 degrees.
+    assert quadrant_residual == 0
+
+    reverse_moves, reverse_residual = emit([10_000, -10_000])
+    assert sum(reverse_moves) == 0
+    assert reverse_residual == 0
+    assert all(move % quantum_e4 == 0 for move in tenth_moves + degree_moves + quadrant_moves + reverse_moves)
 
 
 def assert_command_results() -> None:
@@ -792,8 +815,8 @@ def assert_maijker_build_contract() -> None:
     )[0]
     assert "delay(" not in retry
 
-    # X/Z and C all follow the highlighted DRO digit. C retains independent
-    # degree-per-minute hold-jog ceilings and lets FluidNC quantize motor steps.
+    # X/Z follow the highlighted linear DRO digit. C has a dedicated precision
+    # scale and error-diffuses requests onto the configured 1/16 step grid.
     assert "static const int DEFAULT_DIST_INDEX = 1;" in jog
     assert 'getPref("GentleJogV2", &gentle_jog_profile)' in jog
     assert 'setPref("GentleJogV2", 1)' in jog
@@ -803,15 +826,21 @@ def assert_maijker_build_contract() -> None:
     assert "static const uint32_t PRECISE_C_MOVE_MS = 50;" in jog
     assert "C_DYNAMIC_MIN_FEED = 180000000" in jog
     assert "C_DYNAMIC_MAX_FEED = 900000000" in jog
-    assert "the actual highlighted decimal digit" in jog
-    assert "return e4_power10(std::max(0, std::min(index, 3)) - num_digits());" in jog
-    assert "case 0: return 2700000;" in jog
-    assert "case 1: return 27000000;" in jog
-    assert "case 2: return 270000000;" in jog
+    assert "C_STEP_E4 = 1125" in jog
+    assert "C_MIN_DIST_INDEX = 1" in jog
+    assert "C_MAX_DIST_INDEX = 4" in jog
+    assert "case 1: return 1000;" in jog
+    assert "case 2: return 10000;" in jog
+    assert "case 3: return 100000;" in jog
+    assert "default: return 1000000;" in jog
+    assert "case 1: return 2700000;" in jog
+    assert "case 2: return 27000000;" in jog
+    assert "case 3: return 270000000;" in jog
     assert "default: return C_DYNAMIC_MAX_FEED;" in jog
-    assert "225000" not in jog
-    assert "quantized_c_increment" not in jog
-    assert "_c_residual_e4" not in jog
+    assert "quantize_c_move_e4" in jog
+    assert "_c_precise_residual_e4" in jog
+    assert "commit_quantized_c_move" in jog
+    assert '"C %s: %s / +%s deg"' in jog
     assert 'cmd += c_only ? "G21"' in jog
     assert "c_axis_motion_blocked()" in jog
     assert "e4_t precise_jog_feed(e4_t move)" in jog

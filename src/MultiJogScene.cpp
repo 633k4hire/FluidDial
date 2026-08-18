@@ -229,6 +229,11 @@ private:
     static const uint32_t PRECISE_C_MOVE_MS = 50;
     static const e4_t     C_DYNAMIC_MIN_FEED = 180000000;  // 18000 deg/min = 50 RPM
     static const e4_t     C_DYNAMIC_MAX_FEED = 900000000;  // 90000 deg/min = 250 RPM
+    // Dedicated Maijker C-axis commissioning scale: 200 full steps * 16
+    // microsteps. Keep this synchronized with the DLC32 C steps_per_mm.
+    static const e4_t     C_STEP_E4 = 1125;          // 0.1125 degrees
+    static const int      C_MIN_DIST_INDEX = 1;      // 0.1 degree
+    static const int      C_MAX_DIST_INDEX = 4;      // 100 degrees
 
     static const int      JOG_WINDOW = 8;
 
@@ -245,6 +250,7 @@ private:
     uint32_t _cancel_req_ms    = 0;
     uint32_t _last_cancel_ms   = 0;
     uint32_t _last_lathe_status_ms = 0;
+    e4_t     _c_precise_residual_e4 = 0;
 
     // Lathe X/Z angle jogging.  The angle is persisted, while selecting and
     // armed are deliberately runtime-only.  X or Z remains the operator's
@@ -270,6 +276,16 @@ private:
         _angle_ideal_path_e4 = 0.0;
         _angle_sent_x_e4     = 0;
         _angle_sent_z_e4     = 0;
+    }
+
+    void reset_c_precise_quantization() { _c_precise_residual_e4 = 0; }
+
+    static e4_t quantize_c_move_e4(int64_t ideal_e4) {
+        const bool    negative  = ideal_e4 < 0;
+        const int64_t magnitude = negative ? -ideal_e4 : ideal_e4;
+        const int64_t steps     = (magnitude + C_STEP_E4 / 2) / C_STEP_E4;
+        const int64_t quantized = steps * C_STEP_E4;
+        return static_cast<e4_t>(negative ? -quantized : quantized);
     }
 
     bool angle_can_arm(std::string& reason) const {
@@ -400,6 +416,7 @@ private:
         _cancelling       = false;
         _cancel_held      = false;
         reset_angle_residuals();
+        reset_c_precise_quantization();
     }
 
 public:
@@ -514,13 +531,19 @@ public:
     }
 
     e4_t rotary_c_distance(int index) const {
-        // C uses the same highlighted decimal digit that the operator sees in
-        // the DRO: 0.01, 0.1, 1, and 10 degrees in metric display mode.
-        return e4_power10(std::max(0, std::min(index, 3)) - num_digits());
+        // Precision C is independent of the deprecated C Position presets and
+        // of the X/Z linear unit mode. The unusable 0.01-degree choice is
+        // deliberately omitted on a physical 0.1125-degree step grid.
+        switch (std::max(C_MIN_DIST_INDEX, std::min(index, C_MAX_DIST_INDEX))) {
+            case 1: return 1000;     // 0.1 degree requested
+            case 2: return 10000;    // 1 degree requested
+            case 3: return 100000;   // 10 degrees requested
+            default: return 1000000; // 100 degrees requested
+        }
     }
 
-    int axis_min_index(int axis) const { return rotary_c_axis(axis) ? 0 : min_index(); }
-    int axis_max_index(int axis) const { return rotary_c_axis(axis) ? 3 : max_index(); }
+    int axis_min_index(int axis) const { return rotary_c_axis(axis) ? C_MIN_DIST_INDEX : min_index(); }
+    int axis_max_index(int axis) const { return rotary_c_axis(axis) ? C_MAX_DIST_INDEX : max_index(); }
 
     e4_t distance(int axis) {
         return rotary_c_axis(axis) ? rotary_c_distance(_dist_index[axis])
@@ -534,15 +557,25 @@ public:
         return 0;
     }
 
+    e4_t quantized_c_move(int detents) {
+        const int64_t ideal = static_cast<int64_t>(detents) * selected_c_distance() + _c_precise_residual_e4;
+        return quantize_c_move_e4(ideal);
+    }
+
+    void commit_quantized_c_move(int detents, e4_t emitted_e4) {
+        const int64_t ideal = static_cast<int64_t>(detents) * selected_c_distance() + _c_precise_residual_e4;
+        _c_precise_residual_e4 = static_cast<e4_t>(ideal - emitted_e4);
+    }
+
     e4_t selected_c_jog_feed() {
         // Preserve the reviewed four-speed C hold-jog ladder while the dial
         // distance follows the actual highlighted decimal digit.
         for (int axis = 0; axis < num_axes; ++axis) {
             if (!selected(axis) || !rotary_c_axis(axis)) continue;
-            switch (std::max(0, std::min(_dist_index[axis], 3))) {
-                case 0: return 2700000;    // 270 deg/min = 0.75 RPM
-                case 1: return 27000000;   // 2700 deg/min = 7.5 RPM
-                case 2: return 270000000;  // 27000 deg/min = 75 RPM
+            switch (std::max(C_MIN_DIST_INDEX, std::min(_dist_index[axis], C_MAX_DIST_INDEX))) {
+                case 1: return 2700000;    // 270 deg/min = 0.75 RPM
+                case 2: return 27000000;   // 2700 deg/min = 7.5 RPM
+                case 3: return 270000000;  // 27000 deg/min = 75 RPM
                 default: return C_DYNAMIC_MAX_FEED;  // 250 RPM
             }
         }
@@ -686,8 +719,15 @@ public:
                 for (int axis = 0; axis < num_axes; ++axis) {
                     if (rotary_c_axis(axis)) {
                         char c_step[64];
-                        const double hold_rpm = static_cast<double>(selected_c_jog_feed()) / 10000.0 / 360.0;
-                        snprintf(c_step, sizeof(c_step), "C %s deg  Hold %.2f RPM", e4_to_cstr(distance(axis), 3), hold_rpm);
+                        if (_dynamic_mode) {
+                            const double hold_rpm = static_cast<double>(selected_c_jog_feed()) / 10000.0 / 360.0;
+                            snprintf(c_step, sizeof(c_step), "C %s deg  Hold %.2f RPM", e4_to_cstr(distance(axis), 3), hold_rpm);
+                        } else {
+                            const std::string requested = e4_to_cstr(distance(axis), 3);
+                            const std::string negative  = e4_to_cstr(quantized_c_move(-1), 4);
+                            const std::string positive  = e4_to_cstr(quantized_c_move(1), 4);
+                            snprintf(c_step, sizeof(c_step), "C %s: %s / +%s deg", requested.c_str(), negative.c_str(), positive.c_str());
+                        }
                         const char* c_status = !only_c_axis_selected() ? "C jog must be alone" :
                                                (c_axis_motion_blocked() ? "C locked: stop spindle" : c_step);
                         centered_text(c_status,
@@ -713,6 +753,7 @@ public:
         refreshDisplay();
     }
     void zero_axes() {
+        reset_c_precise_quantization();
         std::string cmd = "G10L20P0";
         for (int axis = 0; axis < num_axes; axis++) {
             if (selected(axis)) {
@@ -742,7 +783,7 @@ public:
 #ifdef MAIJKER_XZACT_LATHE
             // Existing pendants may have linear defaults or the old generic C
             // digit stored in NVS. Apply 0.1 mm to X/Z and rotary index 1
-            // (2.25 degrees) to C once, then preserve later selections.
+            // (0.1 degree requested) to C once, then preserve selections.
             int gentle_jog_profile = 0;
             getPref("GentleJogV2", &gentle_jog_profile);
             if (!gentle_jog_profile) {
@@ -756,6 +797,7 @@ public:
         }
         _angle_degrees           = normalized_angle(_angle_degrees);
         _angle_candidate_degrees = _angle_degrees;
+        reset_c_precise_quantization();
     }
 
     int which(int x, int y) {
@@ -778,6 +820,7 @@ public:
         push_scene(&confirmScene, (void*)confirmMsg.c_str());
     }
     void set_dist_index(int axis, int value) {
+        if (rotary_c_axis(axis) && _dist_index[axis] != value) reset_c_precise_quantization();
         _dist_index[axis] = value;
         setPref("DistanceDigit", axis, value);
     }
@@ -866,6 +909,7 @@ public:
             }
             return;
         }
+        reset_c_precise_quantization();
         int the_axis = the_selected_axis();
         if (the_axis == -2) {
             unselect_all();
@@ -887,6 +931,7 @@ public:
             next_axis();
             return;
         }
+        reset_c_precise_quantization();
         int the_axis = the_selected_axis();
         if (the_axis == -2) {
             unselect_all();
@@ -969,6 +1014,7 @@ public:
         if (_angle_armed) return;
         // Select multiple axes
         if (touchX < 80) {
+            reset_c_precise_quantization();
             int axis = which(touchX, touchY);
             if (selected(axis) && !only(axis)) {
                 unselect(axis);
@@ -1016,7 +1062,7 @@ public:
         return feed64 > f_max ? f_max : (e4_t)feed64;
     }
 
-    void send_mpg_jog(int delta, e4_t feed) {
+    void send_mpg_jog(int delta, e4_t feed, bool use_c_move = false, e4_t c_move = 0) {
         std::string cmd("$J=G91");
         const bool c_only = only_c_axis_selected();
         cmd += c_only ? "G21" : (inInches ? "G20" : "G21");
@@ -1031,7 +1077,8 @@ public:
             for (int axis = 0; axis < num_axes; ++axis) {
                 if (selected(axis)) {
                     cmd += profile_axis_char(axis);
-                    cmd += e4_to_cstr(delta * distance(axis), rotary_c_axis(axis) ? 4 : (inInches ? 3 : 2));
+                    const e4_t axis_move = use_c_move && rotary_c_axis(axis) ? c_move : delta * distance(axis);
+                    cmd += e4_to_cstr(axis_move, rotary_c_axis(axis) ? 4 : (inInches ? 3 : 2));
                 }
             }
         }
@@ -1056,6 +1103,7 @@ public:
         }
 
         const bool c_only = only_c_axis_selected();
+        if (c_only) reset_c_precise_quantization();
         e4_t max_feed = c_only ? C_DYNAMIC_MAX_FEED : e4_from_int(inInches ? 24 : 600);
         int64_t requested_feed = c_only ? selected_c_jog_feed() : static_cast<int64_t>(total_distance) * 300;
         e4_t feedrate = requested_feed > max_feed ? max_feed : static_cast<e4_t>(requested_feed);
@@ -1125,6 +1173,7 @@ public:
         }
         if (c_axis_motion_blocked()) {
             _mpg_accum = 0;
+            reset_c_precise_quantization();
             request_lathe_status(true);
             return;
         }
@@ -1210,13 +1259,24 @@ public:
         }
         if (c_axis_motion_blocked()) {
             _mpg_accum = 0;
+            reset_c_precise_quantization();
             request_lathe_status(true);
             return;
         }
         uint32_t now = millis();
         if ((now - _last_mpg_ms) >= MPG_INTERVAL_MS) {
             JogFlowControl flow = jog_flow_control();
-            e4_t     move = mpg_move_distance(_mpg_accum);
+            const int  acc        = _mpg_accum;
+            const bool quantize_c = only_c_axis_selected();
+            const e4_t c_move     = quantize_c ? quantized_c_move(acc) : 0;
+            e4_t move = quantize_c ? static_cast<e4_t>(std::abs(c_move)) : mpg_move_distance(acc);
+            if (move == 0) {
+                commit_quantized_c_move(acc, c_move);
+                _mpg_accum   = 0;
+                _last_mpg_ms = now;
+                request_redisplay();
+                return;
+            }
             e4_t     feed = precise_jog_feed(move);
             uint32_t outstanding =
                 flow == JogFlowControl::Timed ? jog_outstanding_ms(now) : 0;
@@ -1229,9 +1289,9 @@ public:
 
             _cancel_pending = false;
             _cancelling     = false;
-            int      acc = _mpg_accum;
             uint32_t t0  = millis();
-            send_mpg_jog(_mpg_accum, feed);
+            send_mpg_jog(acc, feed, quantize_c, c_move);
+            if (quantize_c) commit_quantized_c_move(acc, c_move);
 
             uint32_t exec_ms = (uint32_t)((int64_t)move * 60000 / feed);
             if (flow == JogFlowControl::Timed) {
@@ -1324,9 +1384,11 @@ public:
     }
     void onAlarm() {
         if (_angle_armed) disarm_angle(true, "Alarm; disarmed");
+        reset_c_precise_quantization();
         request_redisplay();
     }
     void onError(const char* errstr) override {
+        reset_c_precise_quantization();
         if (_angle_armed) {
             std::string message = "Rejected";
             if (errstr && errstr[0]) message += std::string(": ") + errstr;

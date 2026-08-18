@@ -214,7 +214,7 @@ sent to FluidNC as a filename.
 - On the main **Jog** screen, C has its own precision choices of
   0.1/1/10/100 degrees per detent. The unusable 0.01-degree choice is omitted,
   and these values are independent of the legacy C Position presets. With the
-  commissioned 1/16 driver setting, one physical C microstep is 0.1125 degree.
+  commissioned 1/8 driver setting, one physical C microstep is 0.225 degree.
   Precise mode carries fractional error between detents and sends only exact
   microstep-grid moves; the footer shows both the requested increment and the
   actual next negative/positive move. For example, 1-degree detents alternate

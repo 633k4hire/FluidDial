@@ -535,16 +535,16 @@ def assert_c_jog_feed_policy() -> None:
     assert 243_000 * 10_000 > 2_147_483_647
 
     # Main Jog is independent of the legacy C Position presets. The 0.01-degree
-    # choice is omitted because it cannot produce a step on the 1/16 grid.
+    # choice is omitted because it cannot produce a step on the 1/8 grid.
     increments_e4 = [1_000, 10_000, 100_000, 1_000_000]
     assert [value / 10_000 for value in increments_e4] == [0.1, 1.0, 10.0, 100.0]
 
     hold_feeds_e4 = [2_700_000, 27_000_000, 270_000_000, 900_000_000]
     assert [feed / 10_000 / 360 for feed in hold_feeds_e4] == [0.75, 7.5, 75.0, 250.0]
 
-    # At 3,200 C steps/revolution the physical command quantum is 0.1125 degree.
+    # At 1,600 C steps/revolution the physical command quantum is 0.225 degree.
     # Signed residual carry error-diffuses each requested detent onto that grid.
-    quantum_e4 = 1_125
+    quantum_e4 = 2_250
 
     def quantize(ideal_e4: int) -> int:
         sign = -1 if ideal_e4 < 0 else 1
@@ -561,12 +561,12 @@ def assert_c_jog_feed_policy() -> None:
         return emitted, residual_e4
 
     tenth_moves, tenth_residual = emit([1_000] * 9)
-    assert sum(tenth_moves) == 9_000 == 8 * quantum_e4
+    assert sum(tenth_moves) == 9_000 == 4 * quantum_e4
     assert tenth_residual == 0
 
     degree_moves, degree_residual = emit([10_000] * 9)
     assert sum(degree_moves) == 90_000  # Nine detents land at exactly 9 degrees.
-    assert {move // quantum_e4 for move in degree_moves} == {8, 9}
+    assert {move // quantum_e4 for move in degree_moves} == {4, 5}
     assert degree_residual == 0
 
     quadrant_moves, quadrant_residual = emit([100_000] * 9)
@@ -822,7 +822,7 @@ def assert_maijker_build_contract() -> None:
     assert "delay(" not in retry
 
     # X/Z follow the highlighted linear DRO digit. C has a dedicated precision
-    # scale and error-diffuses requests onto the configured 1/16 step grid.
+    # scale and error-diffuses requests onto the configured 1/8 step grid.
     assert "static const int DEFAULT_DIST_INDEX = 1;" in jog
     assert 'getPref("GentleJogV2", &gentle_jog_profile)' in jog
     assert 'setPref("GentleJogV2", 1)' in jog
@@ -832,7 +832,7 @@ def assert_maijker_build_contract() -> None:
     assert "static const uint32_t PRECISE_C_MOVE_MS = 50;" in jog
     assert "C_DYNAMIC_MIN_FEED = 180000000" in jog
     assert "C_DYNAMIC_MAX_FEED = 900000000" in jog
-    assert "C_STEP_E4 = 1125" in jog
+    assert "C_STEP_E4 = 2250" in jog
     assert "C_MIN_DIST_INDEX = 1" in jog
     assert "C_MAX_DIST_INDEX = 4" in jog
     assert "case 1: return 1000;" in jog

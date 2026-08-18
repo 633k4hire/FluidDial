@@ -229,9 +229,9 @@ private:
     static const uint32_t PRECISE_C_MOVE_MS = 50;
     static const e4_t     C_DYNAMIC_MIN_FEED = 180000000;  // 18000 deg/min = 50 RPM
     static const e4_t     C_DYNAMIC_MAX_FEED = 900000000;  // 90000 deg/min = 250 RPM
-    // Dedicated Maijker C-axis commissioning scale: 200 full steps * 16
+    // Dedicated Maijker C-axis commissioning scale: 200 full steps * 8
     // microsteps. Keep this synchronized with the DLC32 C steps_per_mm.
-    static const e4_t     C_STEP_E4 = 1125;          // 0.1125 degrees
+    static const e4_t     C_STEP_E4 = 2250;          // 0.225 degrees
     static const int      C_MIN_DIST_INDEX = 1;      // 0.1 degree
     static const int      C_MAX_DIST_INDEX = 4;      // 100 degrees
 
@@ -533,7 +533,7 @@ public:
     e4_t rotary_c_distance(int index) const {
         // Precision C is independent of the deprecated C Position presets and
         // of the X/Z linear unit mode. The unusable 0.01-degree choice is
-        // deliberately omitted on a physical 0.1125-degree step grid.
+        // deliberately omitted on a physical 0.225-degree step grid.
         switch (std::max(C_MIN_DIST_INDEX, std::min(index, C_MAX_DIST_INDEX))) {
             case 1: return 1000;     // 0.1 degree requested
             case 2: return 10000;    // 1 degree requested

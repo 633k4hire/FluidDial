@@ -11,6 +11,8 @@ struct LatheStatus {
     bool        known                 = false;
     bool        available             = false;
     bool        enabled               = false;
+    bool        homing_state_known    = false;
+    std::string homed_axes;
     std::string spindle_state;
     std::string shared_chuck_mode;
     std::string spindle_drive;

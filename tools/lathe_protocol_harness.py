@@ -34,6 +34,8 @@ class LatheStatus:
     known: bool = False
     available: bool = False
     enabled: bool = False
+    homing_state_known: bool = False
+    homed_axes: str = ""
     spindle_state: str = ""
     shared_chuck_mode: str = ""
     spindle_drive: str = ""
@@ -142,6 +144,9 @@ def parse_esp421(payload: str) -> LatheStatus:
 
         if key == "Lathe enabled":
             status.enabled = parse_bool(value)
+        elif key == "Homed axes":
+            status.homed_axes = str(value)
+            status.homing_state_known = True
         elif key == "Spindle state":
             status.spindle_state = str(value)
         elif key == "Shared chuck mode":
@@ -307,6 +312,7 @@ def assert_esp421_parsing() -> None:
             "status": "ok",
             "data": [
                 {"id": "Lathe enabled", "value": "true"},
+                {"id": "Homed axes", "value": "XZ"},
                 {"id": "Spindle state", "value": "CLOCKWISE"},
                 {"id": "Shared chuck mode", "value": "SPINDLE"},
                 {"id": "Spindle drive", "value": "C_STEPPER"},
@@ -344,6 +350,7 @@ def assert_esp421_parsing() -> None:
 
     status = parse_esp421(payload)
     assert status.known and status.available and status.enabled
+    assert status.homing_state_known and status.homed_axes == "XZ"
     assert status.spindle_state == "CLOCKWISE"
     assert status.shared_chuck_mode == "SPINDLE"
     assert status.spindle_drive == "C_STEPPER"
@@ -403,6 +410,8 @@ def assert_fallbacks() -> None:
         json.dumps({"cmd": "421", "data": [{"id": "Lathe enabled", "value": "true"}]})
     )
     assert legacy.enabled
+    assert legacy.homing_state_known is False
+    assert legacy.homed_axes == ""
     assert legacy.spindle_state == ""
     assert legacy.shared_chuck_mode == ""
     assert legacy.spindle_drive == ""
@@ -410,6 +419,20 @@ def assert_fallbacks() -> None:
     assert legacy.c_position_dead_reckoned is False
     assert legacy.threading_enabled is False
     assert legacy.threading_feedback_ready is False
+
+    authoritative_unhomed = parse_esp421(
+        json.dumps(
+            {
+                "cmd": "421",
+                "data": [
+                    {"id": "Lathe enabled", "value": "true"},
+                    {"id": "Homed axes", "value": ""},
+                ],
+            }
+        )
+    )
+    assert authoritative_unhomed.homing_state_known is True
+    assert authoritative_unhomed.homed_axes == ""
 
 
 def assert_manual_lathe_math() -> None:

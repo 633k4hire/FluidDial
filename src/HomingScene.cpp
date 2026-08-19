@@ -38,6 +38,19 @@ void set_axis_homed(int axis) {
     homed_axes |= 1 << axis;
     request_redisplay();
 }
+void sync_homed_axes(const char* machine_axes) {
+    int next_homed_axes = 0;
+    for (int display_axis = 0; display_axis < profile_axis_count(); ++display_axis) {
+        const char axis = profile_axis_char(display_axis);
+        if (machine_axes && strchr(machine_axes, axis)) {
+            next_homed_axes |= 1 << display_axis;
+        }
+    }
+    if (homed_axes != next_homed_axes) {
+        homed_axes = next_homed_axes;
+        request_redisplay();
+    }
+}
 void clear_homed_axes() {
     homed_axes = 0;
     request_redisplay();

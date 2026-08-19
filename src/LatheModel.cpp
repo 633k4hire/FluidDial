@@ -96,6 +96,9 @@ static void apply_status(const LatheStatus& next_status) {
     }
 
     set_machine_profile_lathe(status_enables_lathe(s_status));
+    if (s_status.homing_state_known) {
+        sync_homed_axes(s_status.homed_axes.c_str());
+    }
     if (old_lathe_mode != machine_profile_is_lathe()) {
         schedule_action(refresh_homing_for_profile_change);
     }
@@ -432,6 +435,9 @@ void lathe_set_status_value(const char* id, const char* value) {
     if (strcmp(id, "Lathe enabled") == 0) {
         s_pending_status.enabled = parse_bool(value);
         s_pending_status_saw_enabled = true;
+    } else if (strcmp(id, "Homed axes") == 0) {
+        s_pending_status.homed_axes         = value ? value : "";
+        s_pending_status.homing_state_known = true;
     } else if (strcmp(id, "Spindle state") == 0) {
         s_pending_status.spindle_state = value ? value : "";
     } else if (strcmp(id, "Shared chuck mode") == 0) {

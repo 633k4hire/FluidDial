@@ -704,9 +704,6 @@ public:
         } else {
             drawStatus();
         }
-        if (state != Jog && _cancelling) {
-            _cancelling = false;
-        }
         if (_cancelling || _cancel_held) {
             centered_text("Jog Canceled", 120, RED, MEDIUM);
         } else {
@@ -1386,6 +1383,15 @@ public:
                 send_jog_cancel();
                 _last_cancel_ms = now;
             }
+        }
+        // Cancellation is protocol state, not drawing state.  Clear the UI
+        // latch as soon as the controller has left Jog and the bounded cancel
+        // handshake is complete.  Otherwise a compact spindle-status stream
+        // can leave _cancelling set until an unrelated redraw and incorrectly
+        // block the center-hold shortcut back to the spindle controls.
+        if (_cancelling && !_cancel_pending && state != Jog) {
+            _cancelling = false;
+            request_redisplay();
         }
     }
 

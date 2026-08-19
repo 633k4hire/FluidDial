@@ -8,6 +8,7 @@
 #include "e4math.h"
 #include "System.h"  // dbg_printf()
 #include "HomingScene.h"
+#include "LatheManualScene.h"
 #include "LatheModel.h"
 #include "MachineProfile.h"
 
@@ -1012,6 +1013,14 @@ public:
     }
     void onTouchHold() {
         if (_angle_armed) return;
+        // A short center touch opens Jog Mode.  Reserve the corresponding
+        // center hold for direct spindle access while preserving the existing
+        // perimeter hold gesture used to select multiple axes.
+        if (touchIsCenter()) {
+            if (state == Jog || _cancelling || _cancel_held) return;
+            push_scene(&latheSpindleScene);
+            return;
+        }
         // Select multiple axes
         if (touchX < 80) {
             reset_c_precise_quantization();

@@ -64,6 +64,7 @@ class LatheStatus:
     feedback_rpm: float = 0.0
     feedback_index: bool = False
     feedback_angular_pos: bool = False
+    feedback_indexed_angle: bool = False
     feedback_angular_known: bool = False
     feedback_angular_rev: float = 0.0
     feedback_rev_count: int = 0
@@ -202,6 +203,8 @@ def parse_esp421(payload: str) -> LatheStatus:
             status.feedback_index = parse_bool(value)
         elif key == "Feedback angular position":
             status.feedback_angular_pos = parse_bool(value)
+        elif key == "Feedback indexed angle":
+            status.feedback_indexed_angle = parse_bool(value)
         elif key == "Feedback angular rev":
             status.feedback_angular_known = has_number(value)
             status.feedback_angular_rev = parse_float(value) if status.feedback_angular_known else 0.0
@@ -340,6 +343,7 @@ def assert_esp421_parsing() -> None:
                 {"id": "Feedback measured RPM", "value": "318.2"},
                 {"id": "Feedback index", "value": "true"},
                 {"id": "Feedback angular position", "value": "true"},
+                {"id": "Feedback indexed angle", "value": "true"},
                 {"id": "Feedback angular rev", "value": "0.125"},
                 {"id": "Feedback revolution count", "value": "42"},
                 {"id": "Feedback stale", "value": "true"},
@@ -378,6 +382,7 @@ def assert_esp421_parsing() -> None:
     assert status.feedback_rpm_known and status.feedback_rpm == 318.2
     assert status.feedback_index is True
     assert status.feedback_angular_pos is True
+    assert status.feedback_indexed_angle is True
     assert status.feedback_angular_known and status.feedback_angular_rev == 0.125
     assert status.feedback_rev_count == 42
     assert status.feedback_stale is True
@@ -775,7 +780,12 @@ def assert_maijker_build_contract() -> None:
     assert "lathe_finish_live_status_update" in file_parser
     assert '(_cmd == "421" || _cmd == "430")' in file_parser
     assert "request_lathe_live_status();" in manual
+    assert "live ? 100U : 1000U" in manual
     assert "request_lathe_live_status();" in jog
+    assert ">= 100" in jog
+    assert "c_axis_selection_locked()" in jog
+    assert "enforce_c_selection_lock();" in jog
+    assert "lathe_display_axis_position" in lathe
 
     # Manual-lathe helpers use temporary-modal jogs, never silently enable
     # encoder threading, and expose a common cancel path.

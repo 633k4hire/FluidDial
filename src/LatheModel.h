@@ -57,6 +57,7 @@ struct LatheStatus {
     float       feedback_rpm          = 0.0f;
     bool        feedback_index        = false;
     bool        feedback_angular_pos  = false;
+    bool        feedback_indexed_angle = false;
     bool        feedback_angular_known = false;
     float       feedback_angular_rev  = 0.0f;
     int         feedback_rev_count    = 0;
@@ -131,6 +132,7 @@ void operator_note_ota_active(bool active);
 
 void request_lathe_status(bool force = false);
 void request_lathe_live_status();
+e4_t lathe_display_axis_position(int display_axis, e4_t fallback);
 void lathe_schedule_status_refresh(bool immediate = true);
 void lathe_poll_status();
 void lathe_mark_status_unavailable();

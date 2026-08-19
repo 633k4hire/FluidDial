@@ -600,20 +600,52 @@ public:
         return saw_c;
     }
 
-    bool c_axis_motion_blocked() {
-        if (!c_axis_selected()) return false;
-        if (!only_c_axis_selected()) return true;
+    bool c_axis_selection_locked() const {
         const LatheStatus& lathe = lathe_status();
         const bool spindle_stopped = lathe.spindle_state == "STOPPED" && !lathe.spindle_stopping;
         const bool spindle_owns_chuck = lathe.shared_chuck_mode == "SPINDLE" || lathe.shared_chuck_mode == "spindle";
-        return !spindle_stopped || spindle_owns_chuck;
+        return spindle_owns_chuck || !spindle_stopped;
+    }
+
+    int first_linear_axis() const {
+        for (int axis = 0; axis < num_axes; ++axis) {
+            if (!rotary_c_axis(axis)) return axis;
+        }
+        return 0;
+    }
+
+    int selectable_axis_after(int axis, int direction) const {
+        for (int count = 0; count < num_axes; ++count) {
+            axis = (axis + direction + num_axes) % num_axes;
+            if (!rotary_c_axis(axis) || !c_axis_selection_locked()) return axis;
+        }
+        return first_linear_axis();
+    }
+
+    void enforce_c_selection_lock() {
+        if (!c_axis_selection_locked() || !c_axis_selected()) return;
+        for (int axis = 0; axis < num_axes; ++axis) {
+            if (rotary_c_axis(axis)) unselect(axis);
+        }
+        if (_selected_mask == 0) select(first_linear_axis());
+        reset_c_precise_quantization();
+        request_redisplay();
+    }
+
+    bool c_axis_motion_blocked() {
+        if (!c_axis_selected()) return false;
+        if (!only_c_axis_selected()) return true;
+        return c_axis_selection_locked();
     }
     void unselect_all() { _selected_mask = 0; }
     bool selected(int axis) { return _angle_armed ? axis == _angle_reference_axis : (_selected_mask & (1 << axis)); }
     bool only(int axis) { return !_angle_armed && _selected_mask == (1 << axis); }
 
     int  next(int axis) { return (axis < 2) ? axis + 1 : 0; }
-    void select(int axis) { _selected_mask |= 1 << axis; }
+    void select(int axis) {
+        if (rotary_c_axis(axis) && c_axis_selection_locked()) return;
+        _selected_mask |= 1 << axis;
+    }
     void unselect(int axis) { _selected_mask &= ~(1 << axis); }
 
     int the_selected_axis() {
@@ -911,18 +943,15 @@ public:
         int the_axis = the_selected_axis();
         if (the_axis == -2) {
             unselect_all();
-            select(num_axes - 1);
+            select(selectable_axis_after(0, -1));
             return;
         }
         if (the_axis == -1) {
-            select(num_axes - 1);
+            select(selectable_axis_after(0, -1));
             return;
         }
         unselect(the_axis);
-        if (++the_axis == num_axes) {
-            the_axis = 0;
-        }
-        select(the_axis);
+        select(selectable_axis_after(the_axis, 1));
     }
     void prev_axis() {
         if (_angle_armed) {
@@ -941,10 +970,7 @@ public:
             return;
         }
         unselect(the_axis);
-        if (--the_axis < 0) {
-            the_axis = num_axes - 1;
-        }
-        select(the_axis);
+        select(selectable_axis_after(the_axis, -1));
     }
     void touch_top() {
         prev_axis();
@@ -1022,6 +1048,11 @@ public:
         if (touchX < 80) {
             reset_c_precise_quantization();
             int axis = which(touchX, touchY);
+            if (rotary_c_axis(axis) && c_axis_selection_locked()) {
+                request_lathe_live_status();
+                reDisplay();
+                return;
+            }
             if (selected(axis) && !only(axis)) {
                 unselect(axis);
             } else {
@@ -1343,12 +1374,9 @@ public:
     }
 
     void onPoll() override {
-        if (lathe_mode_active() && (uint32_t)(millis() - _last_lathe_status_ms) >= 1000) {
-            const auto& lathe = lathe_status();
-            const bool spindle_owns_chuck =
-                lathe.shared_chuck_mode == "SPINDLE" || lathe.shared_chuck_mode == "spindle";
-            if (spindle_owns_chuck) request_lathe_live_status();
-            else request_lathe_status();
+        enforce_c_selection_lock();
+        if (lathe_mode_active() && (uint32_t)(millis() - _last_lathe_status_ms) >= 100) {
+            request_lathe_live_status();
             _last_lathe_status_ms = millis();
         }
         if (state == Disconnected) {

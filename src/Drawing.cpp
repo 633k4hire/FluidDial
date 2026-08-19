@@ -5,6 +5,7 @@
 #include "Drawing.h"
 #include "alarm.h"
 #include "MachineProfile.h"
+#include "LatheModel.h"
 #include <map>
 #ifdef USE_WIFI
 #    include "WiFiConnection.h"
@@ -325,13 +326,13 @@ void DRO::draw(int axis, int hl_digit, bool highlight) {
     int machine_axis = profile_machine_axis(axis);
     text(profile_axis_cstr(axis), text_left_x(), text_middle_y(), highlight ? GREEN : DARKGREY, MEDIUM, middle_left);
     fancyNumber(
-        myAxes[machine_axis], num_digits(), hl_digit, text_right_x(), text_middle_y(), highlight ? WHITE : DARKGREY, highlight ? RED : DARKGREY);
+        lathe_display_axis_position(axis, myAxes[machine_axis]), num_digits(), hl_digit, text_right_x(), text_middle_y(), highlight ? WHITE : DARKGREY, highlight ? RED : DARKGREY);
     advance();
 }
 
 void DRO::draw(int axis, bool highlight) {
     int machine_axis = profile_machine_axis(axis);
-    Stripe::draw(profile_axis_char(axis), pos_to_cstr(myAxes[machine_axis], num_digits()), highlight, myLimitSwitches[machine_axis] ? GREEN : WHITE);
+    Stripe::draw(profile_axis_char(axis), pos_to_cstr(lathe_display_axis_position(axis, myAxes[machine_axis]), num_digits()), highlight, myLimitSwitches[machine_axis] ? GREEN : WHITE);
 }
 
 void LED::draw(bool highlighted) {

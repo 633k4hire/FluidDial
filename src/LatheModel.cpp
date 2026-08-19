@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <cstdlib>
 
@@ -379,6 +380,15 @@ void request_lathe_live_status() {
     send_line("[ESP430]", 500);
 }
 
+e4_t lathe_display_axis_position(int display_axis, e4_t fallback) {
+    if (!machine_profile_is_lathe() || profile_axis_char(display_axis) != 'C' ||
+        !s_status.feedback_indexed_angle || !s_status.feedback_angular_known) {
+        return fallback;
+    }
+    float revolutions = s_status.feedback_angular_rev - std::floor(s_status.feedback_angular_rev);
+    return static_cast<e4_t>(std::lround(revolutions * 360.0f * 10000.0f));
+}
+
 void lathe_schedule_status_refresh(bool immediate) {
     uint32_t due = millis() + (immediate ? 0 : LATHE_STATUS_REFRESH_MS);
     if (!s_next_status_request_ms ||
@@ -525,6 +535,8 @@ void lathe_set_status_value(const char* id, const char* value) {
         s_pending_status.feedback_index = parse_bool(value);
     } else if (strcmp(id, "Feedback angular position") == 0) {
         s_pending_status.feedback_angular_pos = parse_bool(value);
+    } else if (strcmp(id, "Feedback indexed angle") == 0) {
+        s_pending_status.feedback_indexed_angle = parse_bool(value);
     } else if (strcmp(id, "Feedback angular rev") == 0) {
         s_pending_status.feedback_angular_known = has_number(value);
         s_pending_status.feedback_angular_rev   = s_pending_status.feedback_angular_known ? parse_float(value) : 0.0f;

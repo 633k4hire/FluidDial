@@ -83,7 +83,8 @@ void draw_value_row(int y, const char* label, const char* value, bool selected, 
 
 void poll_lathe_status(uint32_t& last_request_ms, bool live = false) {
     const uint32_t now = millis();
-    if ((uint32_t)(now - last_request_ms) >= 1000) {
+    const uint32_t interval_ms = live ? 100U : 1000U;
+    if ((uint32_t)(now - last_request_ms) >= interval_ms) {
         if (live) request_lathe_live_status();
         else request_lathe_status();
         last_request_ms = now;

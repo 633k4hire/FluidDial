@@ -767,11 +767,10 @@ def assert_maijker_build_contract() -> None:
     assert "set_disconnected_state();" in rst_handler
     assert "state = Disconnected;" not in rst_handler
     assert "flush_fnc_rx(50);" in main
-    assert 'send_line("$RI=1000", 500);' in main
+    assert 'send_line("$RI=50", 500);' in main
     assert "for (int i = 0; i < 4096; i++)" in main
     assert "lathe_poll_status();" in main
-    assert 'send_line("$RI=1000");' in fluidnc
-    assert 'send_line("$RI=200");' not in fluidnc
+    assert 'send_line("$RI=50");' in fluidnc
     assert "LATHE_STATUS_REPLY_TIMEOUT_MS     = 5000" in lathe
     assert "s_status_retry_count >= 2" in lathe
     assert "s_pending_status_saw_enabled" in lathe

@@ -143,7 +143,7 @@ void setup() {
         // fresh report that can safely be parsed now current_scene is valid.
         flush_fnc_rx(50);
         resetFlowControl();
-        send_line("$RI=1000", 500);
+        send_line("$RI=50", 500);
         request_status_report();
     }
 #endif

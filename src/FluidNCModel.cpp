@@ -280,7 +280,7 @@ static void connect_init() {
     fnc_realtime((realtime_cmd_t)0x0c);  // Ctrl-L - echo off (UART only)
 #endif
     send_line("$G");                     // Refresh GCode modes
-    send_line("$RI=1000");               // Keep reboot-time UART backlog bounded
+    send_line("$RI=50");                 // Responsive 20 Hz DRO on the 1 Mbps wired link
     request_lathe_status(true);          // Auto-detect FluidNC lathe support
 
     // File and homing details are loaded when their scenes need them. Sending

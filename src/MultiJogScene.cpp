@@ -252,6 +252,8 @@ private:
     uint32_t _last_cancel_ms   = 0;
     uint32_t _last_lathe_status_ms = 0;
     e4_t     _c_precise_residual_e4 = 0;
+    bool     _red_button_stops_spindle = false;
+    bool     _green_button_ignored_for_spindle = false;
 
     // Lathe X/Z angle jogging.  The angle is persisted, while selecting and
     // armed are deliberately runtime-only.  X or Z remains the operator's
@@ -600,12 +602,14 @@ public:
         return saw_c;
     }
 
-    bool c_axis_selection_locked() const {
+    bool spindle_control_active() const {
         const LatheStatus& lathe = lathe_status();
         const bool spindle_stopped = lathe.spindle_state == "STOPPED" && !lathe.spindle_stopping;
         const bool spindle_owns_chuck = lathe.shared_chuck_mode == "SPINDLE" || lathe.shared_chuck_mode == "spindle";
         return spindle_owns_chuck || !spindle_stopped;
     }
+
+    bool c_axis_selection_locked() const { return spindle_control_active(); }
 
     int first_linear_axis() const {
         for (int axis = 0; axis < num_axes; ++axis) {
@@ -743,7 +747,21 @@ public:
             for (size_t axis = 0; axis < num_axes; axis++) {
                 const int  digit = _dist_index[axis];
                 const bool highlighted = display_selected(axis);
-                dro.draw(axis, digit, highlighted);
+                if (rotary_c_axis(axis) && spindle_control_active()) {
+                    const LatheStatus& lathe = lathe_status();
+                    char rpm[24];
+                    if (lathe.feedback_rpm_known && !lathe.feedback_stale) {
+                        snprintf(rpm, sizeof(rpm), "%.1f RPM", std::fabs(lathe.feedback_rpm));
+                    } else {
+                        snprintf(rpm, sizeof(rpm), "--.- RPM");
+                    }
+                    // The normal C row is an indexed 0..360-degree DRO. While
+                    // spindle ownership is active, show encoder-measured speed
+                    // in that same row and do not imply that C can be jogged.
+                    dro.Stripe::draw('C', rpm, false, GREEN);
+                } else {
+                    dro.draw(axis, digit, highlighted);
+                }
             }
             if (machine_profile_is_lathe()) {
                 for (int axis = 0; axis < num_axes; ++axis) {
@@ -758,10 +776,11 @@ public:
                             const std::string positive  = e4_to_cstr(quantized_c_move(1), 4);
                             snprintf(c_step, sizeof(c_step), "C %s: %s / +%s deg", requested.c_str(), negative.c_str(), positive.c_str());
                         }
-                        const char* c_status = !only_c_axis_selected() ? "C jog must be alone" :
-                                               (c_axis_motion_blocked() ? "C locked: stop spindle" : c_step);
+                        const char* c_status = spindle_control_active() ? "C owned by spindle" :
+                                               (!only_c_axis_selected() ? "C jog must be alone" :
+                                                (c_axis_motion_blocked() ? "C locked: stop spindle" : c_step));
                         centered_text(c_status,
-                                      177, c_axis_motion_blocked() ? RED : CYAN, TINY);
+                                      177, spindle_control_active() ? GREEN : (c_axis_motion_blocked() ? RED : CYAN), TINY);
                         break;
                     }
                 }
@@ -777,7 +796,9 @@ public:
                         dialLegend += profile_axis_char(axis);
                     }
                 }
-                drawButtonLegends("Jog-", "Jog+", dialLegend.c_str());
+                drawButtonLegends(spindle_control_active() ? "STOP" : "Jog-",
+                                  spindle_control_active() ? "" : "Jog+",
+                                  dialLegend.c_str());
             }
         }
         refreshDisplay();
@@ -796,6 +817,8 @@ public:
     void onEntry(void* arg) {
         _diagnostic_angle_armed = false;
         _opening_angle_help     = false;
+        _red_button_stops_spindle = false;
+        _green_button_ignored_for_spindle = false;
         if (arg && strcmp((const char*)arg, "Confirmed") == 0) {
             zero_axes();
         }
@@ -1181,19 +1204,36 @@ public:
     }
 
     void onGreenButtonPress() {
+        _green_button_ignored_for_spindle = spindle_control_active();
+        if (_green_button_ignored_for_spindle) return;
         if (state == Idle) {
             start_button_jog(false);
         }
     }
     void onGreenButtonRelease() {
+        if (_green_button_ignored_for_spindle) {
+            _green_button_ignored_for_spindle = false;
+            return;
+        }
         cancel_jog();
     }
     void onRedButtonPress() {
+        _red_button_stops_spindle = spindle_control_active();
+        if (_red_button_stops_spindle) {
+            send_line("M5");
+            lathe_schedule_status_refresh(true);
+            request_redisplay();
+            return;
+        }
         if (state == Idle) {
             start_button_jog(true);
         }
     }
     void onRedButtonRelease() {
+        if (_red_button_stops_spindle) {
+            _red_button_stops_spindle = false;
+            return;
+        }
         cancel_jog();
     }
 
